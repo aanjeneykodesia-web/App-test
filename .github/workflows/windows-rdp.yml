@@ -1,235 +1,60 @@
-name: RDP - Kiosk Mode (Eiciel OS)
+name: Build & Test
 
 on:
-  workflow_dispatch:
-
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  rdp-session:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 9999
-
     steps:
-      - name: Checkout your app source
-        uses: actions/checkout@v4
-        with:
-          path: app
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
         with:
           node-version: 18
-
-      - name: Build Eiciel OS
-        run: |
-          cd app
-          bash build-and-test.sh
+      - name: Build
+        run: bash build-and-test.sh
         shell: bash
+      - name: Upload artifact (.exe)
+        uses: actions/upload-artifact@v4
+        with:
+          name: EicielOS-win32-x64
+          path: eiciel-electron/EicielOS-win32-x64/
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3 python3-pip default-jdk ffmpeg
+      - name: Run script (skip build)
+        run: |
+          chmod +x build-and-test.sh
+          ./build-and-test.sh
         env:
-          CI: ""
-
-      - name: Fallback build
+          CI: true
+      - name: Install Playwright browsers
         run: |
-          cd app/eiciel-electron
-          npm install
-          npm run build
-        shell: bash
-        if: failure()
-
-      - name: Locate built executable
-        id: locate
+          cd eiciel-electron
+          npx playwright install chromium
+      - name: Run tests with xvfb
         run: |
-          $exePath = "D:\data\EicielOS\EicielOS-win32-x64\EicielOS.exe"
-          if (Test-Path $exePath) {
-            Write-Host "✅ Executable found at: $exePath"
-            echo "EXE_PATH=$exePath" | Out-File -FilePath $env:GITHUB_ENV -Append
-          } else {
-            Write-Host "❌ Searching..."
-            $candidates = @(
-              ".\app\EicielOS-win32-x64\EicielOS.exe",
-              ".\app\eiciel-electron\EicielOS-win32-x64\EicielOS.exe",
-              ".\app\dist\EicielOS-win32-x64\EicielOS.exe"
-            )
-            foreach ($cand in $candidates) {
-              if (Test-Path $cand) {
-                $exePath = Resolve-Path $cand
-                Write-Host "✅ Found at: $exePath"
-                echo "EXE_PATH=$exePath" | Out-File -FilePath $env:GITHUB_ENV -Append
-                break
-              }
-            }
-            if (-not $exePath) {
-              Write-Host "❌ Executable not found."
-              exit 1
-            }
-          }
-
-      - name: Install UltraVNC
+          cd eiciel-electron
+          xvfb-run --auto-servernum -- npm test
+      - name: Convert WebM to MP4
         run: |
-          choco install ultravnc -y --limit-output
-          Start-Sleep -Seconds 10
-
-          $installDir = "C:\Program Files\uvnc bvba\UltraVNC"
-          if (-not (Test-Path $installDir)) {
-            $searchPaths = @(
-              "C:\Program Files\UltraVNC",
-              "C:\Program Files (x86)\UltraVNC",
-              "C:\Program Files\uvnc bvba\UltraVNC"
-            )
-            foreach ($p in $searchPaths) {
-              if (Test-Path $p) { $installDir = $p; break }
-            }
-          }
-
-          if (-not (Test-Path $installDir)) {
-            Write-Host "❌ Could not locate UltraVNC"
-            exit 1
-          }
-          Write-Host "✅ UltraVNC at: $installDir"
-
-          $vncServer = "$installDir\winvnc.exe"
-          if (-not (Test-Path $vncServer)) {
-            Write-Host "❌ winvnc.exe missing"
-            Get-ChildItem $installDir
-            exit 1
-          }
-
-          echo "VNC_PATH=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "$installDir" | Out-File -FilePath $env:GITHUB_PATH -Append
-
-      - name: Set VNC password and start server
-        run: |
-          $vncDir = $env:VNC_PATH
-          if (-not $vncDir) { Write-Host "VNC_PATH not set"; exit 1 }
-
-          $vncServer = "$vncDir\winvnc.exe"
-          $password = "P@ssw0rd123!"
-
-          if (-not (Test-Path $vncServer)) {
-            Write-Host "❌ winvnc.exe not found"
-            exit 1
-          }
-
-          Start-Process -FilePath $vncServer -ArgumentList "-run -passwd $password" -WindowStyle Hidden
-
-          Start-Sleep -Seconds 5
-          netstat -an | findstr :5900
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "⚠️ Port 5900 not listening"
-            Get-Process -Name winvnc -ErrorAction SilentlyContinue
-          }
-
-      - name: Setup noVNC + websockify
-        run: |
-          # Install websockify
-          python -m pip install websockify
-
-          # Clone noVNC UI
-          if (-not (Test-Path "C:\noVNC")) {
-            git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
-          }
-
-          # Kill anything on port 6080
-          $existing = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
-          if ($existing) {
-            $existing | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
-            Start-Sleep -Seconds 2
-          }
-
-          # Start websockify (capture logs)
-          $logOut = "$env:TEMP\websockify_out.log"
-          $logErr = "$env:TEMP\websockify_err.log"
-          Start-Process -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC 6080 localhost:5900" -RedirectStandardOutput $logOut -RedirectStandardError $logErr -WindowStyle Hidden -PassThru
-
-          # Wait for port to listen
-          $maxAttempts = 15
-          $attempt = 0
-          $listening = $false
-          while ($attempt -lt $maxAttempts) {
-            Start-Sleep -Seconds 2
-            $conn = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
-            if ($conn -and $conn.State -eq 'Listen') {
-              $listening = $true
-              break
-            }
-            $attempt++
-            Write-Host "Waiting for websockify to bind port 6080... attempt $($attempt+1)/$maxAttempts"
-          }
-
-          if (-not $listening) {
-            Write-Host "❌ Port 6080 is not listening. Logs:"
-            Get-Content $logOut
-            Get-Content $logErr
-            exit 1
-          }
-
-          # Health check: try to fetch the WebSocket endpoint (should 404, but that's fine)
-          try {
-            $wsTest = Invoke-WebRequest -Uri "http://localhost:6080/websockify" -UseBasicParsing -TimeoutSec 3
-            Write-Host "✅ websockify responded with $($wsTest.StatusCode)"
-          } catch {
-            Write-Host "⚠️ websockify returned an error, but it may still work."
-          }
-
-          Write-Host "✅ noVNC ready on http://localhost:6080"
-
-      - name: Expose via ngrok (more reliable for WebSockets)
-        run: |
-          # Download and extract ngrok
-          Invoke-WebRequest -Uri "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-          Expand-Archive -Path "ngrok.zip" -DestinationPath "C:\ngrok" -Force
-
-          # Set authtoken from secrets
-          $authToken = "${{ secrets.NGROK_AUTHTOKEN }}"
-          if ($authToken -ne "") {
-            C:\ngrok\ngrok.exe authtoken $authToken
-          } else {
-            Write-Host "⚠️ NGROK_AUTHTOKEN not set – ngrok may still work but require manual auth."
-          }
-
-          # Start ngrok HTTP tunnel on port 6080
-          Start-Process -FilePath "C:\ngrok\ngrok.exe" -ArgumentList "http 6080" -WindowStyle Hidden -PassThru
-
-          # Wait for the API to return the public URL
-          $maxAttempts = 20
-          $attempt = 0
-          $tunnelUrl = $null
-          while ($attempt -lt $maxAttempts) {
-            Start-Sleep -Seconds 2
-            try {
-              $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
-              $tunnelUrl = $tunnels.tunnels[0].public_url
-              if ($tunnelUrl) { break }
-            } catch {
-              Write-Host "Waiting for ngrok API... attempt $($attempt+1)/$maxAttempts"
-            }
-            $attempt++
-          }
-
-          if (-not $tunnelUrl) {
-            Write-Host "❌ Could not retrieve ngrok URL."
-            exit 1
-          }
-
-          Write-Host "============================================"
-          Write-Host "  WEB VNC READY – Eiciel OS KIOSK"
-          Write-Host "============================================"
-          Write-Host ""
-          Write-Host "  Open this URL in your browser: $tunnelUrl"
-          Write-Host "  VNC Password: P@ssw0rd123!"
-          Write-Host ""
-          Write-Host "  (The noVNC interface will load – click Connect)"
-          Write-Host "============================================"
-
-          # Keep the tunnel alive
-          Wait-Process -Name ngrok
-
-      - name: Lock down to only the app
-        run: |
-          $exePath = $env:EXE_PATH
-          if (-not $exePath) { Write-Host "❌ EXE_PATH not set"; exit 1 }
-          reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v Shell /t REG_SZ /d "$exePath" /f
-          reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Policies\System" /v DisableTaskMgr /t REG_DWORD /d 1 /f
-          Write-Host "✅ Shell set to: $exePath"
+          cd eiciel-electron
+          find test-results -name "*.webm" -exec sh -c 'ffmpeg -i "$0" -c:v libx264 -preset fast -crf 23 -y "${0%.webm}.mp4" && rm "$0"' {} \;
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-test-results
+          path: eiciel-electron/test-results/
+          
