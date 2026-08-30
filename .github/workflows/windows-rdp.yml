@@ -1,60 +1,153 @@
-name: Build & Test
+name: RDP - Kiosk Mode (Eiciel OS)
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
-  build:
+  rdp-session:
     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-      - name: Build
-        run: bash build-and-test.sh
-        shell: bash
-      - name: Upload artifact (.exe)
-        uses: actions/upload-artifact@v4
-        with:
-          name: EicielOS-win32-x64
-          path: eiciel-electron/EicielOS-win32-x64/
+    timeout-minutes: 9999
 
-  test:
-    runs-on: ubuntu-latest
-    needs: build
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      # ─── Checkout your source code ──────────────────────────────
+      - name: Checkout your app source
+        uses: actions/checkout@v4
         with:
-          node-version: 18
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y xvfb python3 python3-pip default-jdk ffmpeg
-      - name: Run script (skip build)
+          path: app
+
+      # ─── Build your Electron app (encrypted + self‑destruct) ────
+      - name: Build Eiciel OS
         run: |
-          chmod +x build-and-test.sh
-          ./build-and-test.sh
+          cd app
+          bash build-and-test.sh
+        shell: bash
         env:
-          CI: true
-      - name: Install Playwright browsers
+          CI: ""
+
+      # ─── VNC + noVNC + ngrok (browser‑based remote desktop) ────
+
+      - name: Install UltraVNC
         run: |
-          cd eiciel-electron
-          npx playwright install chromium
-      - name: Run tests with xvfb
+          choco install ultravnc -y --limit-output
+          Start-Sleep -Seconds 10
+          $installDir = "C:\Program Files\uvnc bvba\UltraVNC"
+          if (-not (Test-Path $installDir)) {
+            $searchPaths = @(
+              "C:\Program Files\UltraVNC",
+              "C:\Program Files (x86)\UltraVNC",
+              "C:\Program Files\uvnc bvba\UltraVNC"
+            )
+            foreach ($p in $searchPaths) {
+              if (Test-Path $p) { $installDir = $p; break }
+            }
+          }
+          if (-not (Test-Path $installDir)) {
+            Write-Host "❌ UltraVNC not found"
+            exit 1
+          }
+          echo "VNC_PATH=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "✅ UltraVNC installed at $installDir"
+
+      - name: Start VNC server
         run: |
-          cd eiciel-electron
-          xvfb-run --auto-servernum -- npm test
-      - name: Convert WebM to MP4
+          $vncServer = "$env:VNC_PATH\winvnc.exe"
+          $password = "P@ssw0rd123!"
+          if (-not (Test-Path $vncServer)) {
+            Write-Host "❌ winvnc.exe not found"
+            exit 1
+          }
+          Start-Process -FilePath $vncServer -ArgumentList "-run -passwd $password" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          netstat -an | findstr :5900
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "⚠️ Port 5900 not listening"
+            Get-Process -Name winvnc -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Write-Host "✅ VNC server running on port 5900"
+
+      - name: Setup noVNC web client
         run: |
-          cd eiciel-electron
-          find test-results -name "*.webm" -exec sh -c 'ffmpeg -i "$0" -c:v libx264 -preset fast -crf 23 -y "${0%.webm}.mp4" && rm "$0"' {} \;
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-test-results
-          path: eiciel-electron/test-results/
-          
+          # Install websockify
+          python -m pip install websockify
+          # Clone noVNC UI
+          if (-not (Test-Path "C:\noVNC")) {
+            git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
+          }
+          # Kill any existing process on port 6080
+          $conn = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
+          if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }
+          Start-Sleep -Seconds 2
+          # Start websockify
+          Start-Process -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC 6080 localhost:5900" -WindowStyle Hidden -PassThru
+          # Wait for port 6080 to listen
+          $maxAttempts = 15
+          $attempt = 0
+          while ($attempt -lt $maxAttempts) {
+            $conn = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
+            if ($conn -and $conn.State -eq 'Listen') { break }
+            Start-Sleep -Seconds 2
+            $attempt++
+            Write-Host "Waiting for websockify... $($attempt+1)/$maxAttempts"
+          }
+          if ($attempt -ge $maxAttempts) {
+            Write-Host "❌ websockify failed to bind port 6080"
+            exit 1
+          }
+          Write-Host "✅ noVNC ready on http://localhost:6080"
+
+      - name: Expose VNC via ngrok
+        run: |
+          # Download and extract ngrok
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Expand-Archive -Path "ngrok.zip" -DestinationPath "C:\ngrok" -Force
+
+          # Authenticate if token is provided
+          $token = "${{ secrets.NGROK_AUTHTOKEN }}"
+          if ($token -ne "") {
+            C:\ngrok\ngrok.exe authtoken $token
+            Write-Host "✅ ngrok authenticated"
+          } else {
+            Write-Host "⚠️ NGROK_AUTHTOKEN not set – ngrok may still work but requires manual auth"
+          }
+
+          # Start ngrok HTTP tunnel on port 6080
+          Start-Process -FilePath "C:\ngrok\ngrok.exe" -ArgumentList "http 6080" -WindowStyle Hidden -PassThru
+
+          # Wait for ngrok API to return the public URL
+          $maxAttempts = 30
+          $attempt = 0
+          $url = $null
+          while ($attempt -lt $maxAttempts) {
+            Start-Sleep -Seconds 2
+            try {
+              $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction Stop
+              if ($tunnels.tunnels.Count -gt 0) {
+                $url = $tunnels.tunnels[0].public_url
+                break
+              }
+            } catch {
+              Write-Host "Waiting for ngrok API... $($attempt+1)/$maxAttempts"
+            }
+            $attempt++
+          }
+
+          if (-not $url) {
+            Write-Host "❌ Could not get ngrok URL"
+            Write-Host "Check ngrok logs:"
+            Get-Content C:\ngrok\ngrok.log -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          Write-Host "============================================"
+          Write-Host "  🖥️  VNC READY – Eiciel OS"
+          Write-Host "============================================"
+          Write-Host "  Open this URL in your browser: $url"
+          Write-Host "  VNC Password: P@ssw0rd123!"
+          Write-Host "============================================"
+
+          # Keep the tunnel alive
+          Wait-Process -Name ngrok
