@@ -30,7 +30,7 @@ jobs:
         env:
           CI: ""
 
-      - name: Fallback build (if script didn't build)
+      - name: Fallback build
         run: |
           cd app/eiciel-electron
           npm install
@@ -46,7 +46,7 @@ jobs:
             Write-Host "✅ Executable found at: $exePath"
             echo "EXE_PATH=$exePath" | Out-File -FilePath $env:GITHUB_ENV -Append
           } else {
-            Write-Host "❌ Not at expected path. Searching..."
+            Write-Host "❌ Searching..."
             $candidates = @(
               ".\app\EicielOS-win32-x64\EicielOS.exe",
               ".\app\eiciel-electron\EicielOS-win32-x64\EicielOS.exe",
@@ -94,7 +94,7 @@ jobs:
 
           $vncServer = "$installDir\winvnc.exe"
           if (-not (Test-Path $vncServer)) {
-            Write-Host "❌ winvnc.exe missing in $installDir"
+            Write-Host "❌ winvnc.exe missing"
             Get-ChildItem $installDir
             exit 1
           }
@@ -132,60 +132,49 @@ jobs:
           Start-Sleep -Seconds 3
           Write-Host "✅ noVNC running on http://localhost:6080"
 
-      - name: Expose web VNC via ngrok
+      # ─── Expose noVNC via Cloudflare (HTTP tunnel) ──────────────
+      - name: Expose web VNC via Cloudflare
         run: |
-          # Download and extract ngrok
-          Invoke-WebRequest -Uri "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
-          Expand-Archive -Path "ngrok.zip" -DestinationPath "C:\ngrok" -Force
-          cd C:\ngrok
+          # Start cloudflared in the background, redirect output to a temp file
+          $logFile = "$env:TEMP\cloudflared.log"
+          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $logFile -RedirectStandardError $logFile -WindowStyle Hidden -PassThru
 
-          # (Optional) If you have a free authtoken, uncomment the next line:
-          # .\ngrok.exe authtoken YOUR_TOKEN
-
-          # Start ngrok (HTTP tunnel on port 6080)
-          Start-Process -FilePath ".\ngrok.exe" -ArgumentList "http 6080" -WindowStyle Hidden -PassThru
-
-          # Wait for ngrok API to become available
+          # Wait for the tunnel to establish and capture the URL
           $maxAttempts = 30
           $attempt = 0
-          $apiReady = $false
+          $tunnelUrl = $null
           while ($attempt -lt $maxAttempts) {
-            Start-Sleep -Seconds 1
-            try {
-              $null = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction Stop
-              $apiReady = $true
-              break
-            } catch {
-              Write-Host "Waiting for ngrok API... attempt $($attempt+1)/$maxAttempts"
-              $attempt++
+            Start-Sleep -Seconds 2
+            if (Test-Path $logFile) {
+              $content = Get-Content $logFile -Raw
+              # Look for the trycloudflare.com URL
+              if ($content -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
+                $tunnelUrl = $matches[0]
+                break
+              }
             }
+            $attempt++
+            Write-Host "Waiting for tunnel URL... attempt $($attempt+1)/$maxAttempts"
           }
 
-          if (-not $apiReady) {
-            Write-Host "❌ ngrok did not start or API not responding."
-            $proc = Get-Process -Name ngrok -ErrorAction SilentlyContinue
-            if ($proc) {
-              Write-Host "ngrok process is running but API is down."
-            } else {
-              Write-Host "ngrok process is not running."
-            }
+          if (-not $tunnelUrl) {
+            Write-Host "❌ Could not retrieve tunnel URL. Log content:"
+            Get-Content $logFile
             exit 1
           }
 
-          $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
-          $webUrl = $tunnels.tunnels[0].public_url
           Write-Host "============================================"
           Write-Host "  WEB VNC READY – Eiciel OS KIOSK"
           Write-Host "============================================"
           Write-Host ""
-          Write-Host "  Open this URL in your browser: $webUrl"
+          Write-Host "  Open this URL in your browser: $tunnelUrl"
           Write-Host "  VNC Password: P@ssw0rd123!"
           Write-Host ""
           Write-Host "  (The noVNC interface will load – click Connect)"
           Write-Host "============================================"
 
-          # Keep the tunnel alive
-          Wait-Process -Name ngrok
+          # Keep the tunnel alive by waiting for cloudflared to exit (it shouldn't)
+          Wait-Process -Name cloudflared
 
       - name: Lock down to only the app
         run: |
