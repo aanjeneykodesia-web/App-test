@@ -58,9 +58,7 @@ jobs:
             Write-Host "❌ winvnc.exe not found"
             exit 1
           }
-          # Set password in registry
           & $vncServer -passwd $password
-          # Start server with desktop sharing
           Start-Process -FilePath $vncServer -ArgumentList "-run -desktop" -WindowStyle Hidden
           Start-Sleep -Seconds 5
           netstat -an | findstr :5900
@@ -76,19 +74,16 @@ jobs:
           if (-not (Test-Path "C:\noVNC")) {
             git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
           }
-          # Redirect root to vnc.html
           echo '<meta http-equiv="refresh" content="0;url=vnc.html">' > C:\noVNC\index.html
 
-          # Kill any existing process on 6080
           $conn = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
           if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }
           Start-Sleep -Seconds 2
 
-          # Start websockify with verbose logging
-          $logFile = "$env:TEMP\websockify.log"
-          Start-Process -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC --verbose 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $logFile -WindowStyle Hidden -PassThru
+          $logOut = "$env:TEMP\websockify_out.log"
+          $logErr = "$env:TEMP\websockify_err.log"
+          Start-Process -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC --verbose 6080 localhost:5900" -RedirectStandardOutput $logOut -RedirectStandardError $logErr -WindowStyle Hidden -PassThru
 
-          # Wait for port to listen
           $maxAttempts = 15
           $attempt = 0
           while ($attempt -lt $maxAttempts) {
@@ -100,11 +95,13 @@ jobs:
           }
           if ($attempt -ge $maxAttempts) {
             Write-Host "❌ websockify failed to bind port 6080"
-            Get-Content $logFile
+            Write-Host "stdout log:"
+            Get-Content $logOut
+            Write-Host "stderr log:"
+            Get-Content $logErr
             exit 1
           }
 
-          # Test local connectivity (curl to websockify)
           try {
             $response = Invoke-WebRequest -Uri "http://localhost:6080" -UseBasicParsing -TimeoutSec 3
             Write-Host "✅ websockify responded with status $($response.StatusCode)"
@@ -113,7 +110,6 @@ jobs:
           }
 
           Write-Host "✅ noVNC ready on http://localhost:6080"
-          Write-Host "Websockify logs will be saved to $logFile"
 
       - name: Expose VNC via Cloudflare
         run: |
@@ -157,5 +153,4 @@ jobs:
           Write-Host "  VNC Password: P@ssw0rd123!"
           Write-Host "============================================"
 
-          # Keep the tunnel alive
           Wait-Process -Name cloudflared
