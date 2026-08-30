@@ -141,9 +141,10 @@ jobs:
             Start-Sleep -Seconds 2
           }
 
-          # Start websockify and capture logs
-          $logFile = "$env:TEMP\websockify.log"
-          Start-Process -FilePath "python" -ArgumentList "C:\websockify\websockify.py --web C:\noVNC 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $logFile -WindowStyle Hidden -PassThru
+          # Start websockify – separate stdout and stderr files
+          $logOut = "$env:TEMP\websockify_out.log"
+          $logErr = "$env:TEMP\websockify_err.log"
+          Start-Process -FilePath "python" -ArgumentList "C:\websockify\websockify.py --web C:\noVNC 6080 localhost:5900" -RedirectStandardOutput $logOut -RedirectStandardError $logErr -WindowStyle Hidden -PassThru
 
           # Wait for port 6080 to be in LISTEN state
           $maxAttempts = 15
@@ -162,8 +163,10 @@ jobs:
 
           if (-not $listening) {
             Write-Host "❌ Port 6080 is not listening after $maxAttempts attempts."
-            Write-Host "Websockify log content:"
-            Get-Content $logFile
+            Write-Host "Websockify stdout log:"
+            Get-Content $logOut
+            Write-Host "Websockify stderr log:"
+            Get-Content $logErr
             exit 1
           }
 
