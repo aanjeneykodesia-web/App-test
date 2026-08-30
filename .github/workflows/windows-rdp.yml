@@ -25,9 +25,6 @@ jobs:
         env:
           CI: ""
 
-      - name: Setup Cloudflared
-        uses: AnimMouse/setup-cloudflared@v2
-
       - name: Install UltraVNC
         run: |
           choco install ultravnc -y --limit-output
@@ -111,46 +108,49 @@ jobs:
 
           Write-Host "✅ noVNC ready on http://localhost:6080"
 
-      - name: Expose VNC via Cloudflare
+      - name: Expose via ngrok
         run: |
-          $outFile = "$env:TEMP\cloudflared_out.log"
-          $errFile = "$env:TEMP\cloudflared_err.log"
-          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Expand-Archive -Path "ngrok.zip" -DestinationPath "C:\ngrok" -Force
+          $token = "${{ secrets.NGROK_AUTHTOKEN }}"
+          if ($token -ne "") {
+            C:\ngrok\ngrok.exe authtoken $token
+            Write-Host "✅ ngrok authenticated"
+          } else {
+            Write-Host "⚠️ NGROK_AUTHTOKEN not set – ngrok may still work but requires manual auth"
+          }
+          Start-Process -FilePath "C:\ngrok\ngrok.exe" -ArgumentList "http 6080" -WindowStyle Hidden -PassThru
 
-          $maxAttempts = 40
+          $maxAttempts = 30
           $attempt = 0
-          $tunnelUrl = $null
+          $url = $null
           while ($attempt -lt $maxAttempts) {
             Start-Sleep -Seconds 2
-            $files = @($outFile, $errFile)
-            foreach ($f in $files) {
-              if (Test-Path $f) {
-                $content = Get-Content $f -Raw
-                if ($content -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
-                  $tunnelUrl = $matches[0]
-                  break
-                }
+            try {
+              $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels" -ErrorAction Stop
+              if ($tunnels.tunnels.Count -gt 0) {
+                $url = $tunnels.tunnels[0].public_url
+                break
               }
+            } catch {
+              Write-Host "Waiting for ngrok API... $($attempt+1)/$maxAttempts"
             }
-            if ($tunnelUrl) { break }
             $attempt++
-            Write-Host "Waiting for tunnel URL... attempt $($attempt+1)/$maxAttempts"
           }
 
-          if (-not $tunnelUrl) {
-            Write-Host "❌ Could not retrieve tunnel URL."
-            Write-Host "stdout log:"
-            Get-Content $outFile
-            Write-Host "stderr log:"
-            Get-Content $errFile
+          if (-not $url) {
+            Write-Host "❌ Could not get ngrok URL"
+            Write-Host "Check ngrok logs:"
+            Get-Content C:\ngrok\ngrok.log -ErrorAction SilentlyContinue
             exit 1
           }
 
           Write-Host "============================================"
           Write-Host "  🖥️  VNC READY – Eiciel OS"
           Write-Host "============================================"
-          Write-Host "  Open this URL in your browser: $tunnelUrl"
+          Write-Host "  Open this URL in your browser: $url"
+          Write-Host "  (auto-redirects to VNC client)"
           Write-Host "  VNC Password: P@ssw0rd123!"
           Write-Host "============================================"
 
-          Wait-Process -Name cloudflared
+          Wait-Process -Name ngrok
