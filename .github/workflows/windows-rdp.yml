@@ -66,9 +66,6 @@ jobs:
             }
           }
 
-      - name: Setup Cloudflared
-        uses: AnimMouse/setup-cloudflared@v2
-
       - name: Install UltraVNC
         run: |
           choco install ultravnc -y --limit-output
@@ -124,29 +121,29 @@ jobs:
             Get-Process -Name winvnc -ErrorAction SilentlyContinue
           }
 
-      - name: Setup noVNC
+      - name: Setup noVNC + websockify
         run: |
-          # Clone noVNC web UI
+          # Install websockify
+          python -m pip install websockify
+
+          # Clone noVNC UI
           if (-not (Test-Path "C:\noVNC")) {
             git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
           }
 
-          # Install websockify via pip (no git clone needed)
-          python -m pip install websockify
-
-          # Kill any process using port 6080
+          # Kill anything on port 6080
           $existing = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
           if ($existing) {
             $existing | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
             Start-Sleep -Seconds 2
           }
 
-          # Start websockify using the installed module
+          # Start websockify (capture logs)
           $logOut = "$env:TEMP\websockify_out.log"
           $logErr = "$env:TEMP\websockify_err.log"
           Start-Process -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC 6080 localhost:5900" -RedirectStandardOutput $logOut -RedirectStandardError $logErr -WindowStyle Hidden -PassThru
 
-          # Wait for port 6080 to be in LISTEN state
+          # Wait for port to listen
           $maxAttempts = 15
           $attempt = 0
           $listening = $false
@@ -162,48 +159,57 @@ jobs:
           }
 
           if (-not $listening) {
-            Write-Host "❌ Port 6080 is not listening after $maxAttempts attempts."
-            Write-Host "Websockify stdout log:"
+            Write-Host "❌ Port 6080 is not listening. Logs:"
             Get-Content $logOut
-            Write-Host "Websockify stderr log:"
             Get-Content $logErr
             exit 1
           }
 
-          Write-Host "✅ noVNC running on http://localhost:6080"
+          # Health check: try to fetch the WebSocket endpoint (should 404, but that's fine)
+          try {
+            $wsTest = Invoke-WebRequest -Uri "http://localhost:6080/websockify" -UseBasicParsing -TimeoutSec 3
+            Write-Host "✅ websockify responded with $($wsTest.StatusCode)"
+          } catch {
+            Write-Host "⚠️ websockify returned an error, but it may still work."
+          }
 
-      - name: Expose web VNC via Cloudflare
+          Write-Host "✅ noVNC ready on http://localhost:6080"
+
+      - name: Expose via ngrok (more reliable for WebSockets)
         run: |
-          $outFile = "$env:TEMP\cloudflared_out.log"
-          $errFile = "$env:TEMP\cloudflared_err.log"
-          $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          # Download and extract ngrok
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/4VmDzA7iaHb/ngrok-stable-windows-amd64.zip" -OutFile "ngrok.zip"
+          Expand-Archive -Path "ngrok.zip" -DestinationPath "C:\ngrok" -Force
 
-          $maxAttempts = 40
+          # Set authtoken from secrets
+          $authToken = "${{ secrets.NGROK_AUTHTOKEN }}"
+          if ($authToken -ne "") {
+            C:\ngrok\ngrok.exe authtoken $authToken
+          } else {
+            Write-Host "⚠️ NGROK_AUTHTOKEN not set – ngrok may still work but require manual auth."
+          }
+
+          # Start ngrok HTTP tunnel on port 6080
+          Start-Process -FilePath "C:\ngrok\ngrok.exe" -ArgumentList "http 6080" -WindowStyle Hidden -PassThru
+
+          # Wait for the API to return the public URL
+          $maxAttempts = 20
           $attempt = 0
           $tunnelUrl = $null
           while ($attempt -lt $maxAttempts) {
             Start-Sleep -Seconds 2
-            $files = @($outFile, $errFile)
-            foreach ($f in $files) {
-              if (Test-Path $f) {
-                $content = Get-Content $f -Raw
-                if ($content -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
-                  $tunnelUrl = $matches[0]
-                  break
-                }
-              }
+            try {
+              $tunnels = Invoke-RestMethod -Uri "http://localhost:4040/api/tunnels"
+              $tunnelUrl = $tunnels.tunnels[0].public_url
+              if ($tunnelUrl) { break }
+            } catch {
+              Write-Host "Waiting for ngrok API... attempt $($attempt+1)/$maxAttempts"
             }
-            if ($tunnelUrl) { break }
             $attempt++
-            Write-Host "Waiting for tunnel URL... attempt $($attempt+1)/$maxAttempts"
           }
 
           if (-not $tunnelUrl) {
-            Write-Host "❌ Could not retrieve tunnel URL."
-            Write-Host "stdout log:"
-            Get-Content $outFile
-            Write-Host "stderr log:"
-            Get-Content $errFile
+            Write-Host "❌ Could not retrieve ngrok URL."
             exit 1
           }
 
@@ -218,7 +224,7 @@ jobs:
           Write-Host "============================================"
 
           # Keep the tunnel alive
-          Wait-Process -Name cloudflared
+          Wait-Process -Name ngrok
 
       - name: Lock down to only the app
         run: |
