@@ -1,0 +1,20 @@
+{
+  "name": "eiciel-os",
+  "version": "6.9.9",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "playwright test",
+    "build": "electron-packager . EicielOS --platform=win32 --arch=x64 --out=D:/data/EicielOS --overwrite",
+    "build:linux": "electron-packager . EicielOS --platform=linux --arch=x64 --out=dist/ --overwrite"
+  },
+  "dependencies": {
+    "systeminformation": "^5.21.22",
+    "archiver": "^6.0.0"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-packager": "^17.1.2",
+    "@playwright/test": "^1.40.0"
+  }
+}
