@@ -136,26 +136,32 @@ jobs:
         run: |
           $outFile = "$env:TEMP\cloudflared_out.log"
           $errFile = "$env:TEMP\cloudflared_err.log"
-          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          $process = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
 
-          $maxAttempts = 30
+          $maxAttempts = 40
           $attempt = 0
           $tunnelUrl = $null
           while ($attempt -lt $maxAttempts) {
             Start-Sleep -Seconds 2
-            if (Test-Path $outFile) {
-              $content = Get-Content $outFile -Raw
-              if ($content -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
-                $tunnelUrl = $matches[0]
-                break
+            # Check both stdout and stderr files
+            $files = @($outFile, $errFile)
+            foreach ($f in $files) {
+              if (Test-Path $f) {
+                $content = Get-Content $f -Raw
+                if ($content -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
+                  $tunnelUrl = $matches[0]
+                  break
+                }
               }
             }
+            if ($tunnelUrl) { break }
             $attempt++
             Write-Host "Waiting for tunnel URL... attempt $($attempt+1)/$maxAttempts"
           }
 
           if (-not $tunnelUrl) {
-            Write-Host "❌ Could not retrieve tunnel URL. stdout log:"
+            Write-Host "❌ Could not retrieve tunnel URL."
+            Write-Host "stdout log:"
             Get-Content $outFile
             Write-Host "stderr log:"
             Get-Content $errFile
