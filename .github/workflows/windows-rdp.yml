@@ -132,22 +132,19 @@ jobs:
           Start-Sleep -Seconds 3
           Write-Host "✅ noVNC running on http://localhost:6080"
 
-      # ─── Expose noVNC via Cloudflare (HTTP tunnel) ──────────────
       - name: Expose web VNC via Cloudflare
         run: |
-          # Start cloudflared in the background, redirect output to a temp file
-          $logFile = "$env:TEMP\cloudflared.log"
-          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $logFile -RedirectStandardError $logFile -WindowStyle Hidden -PassThru
+          $outFile = "$env:TEMP\cloudflared_out.log"
+          $errFile = "$env:TEMP\cloudflared_err.log"
+          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
 
-          # Wait for the tunnel to establish and capture the URL
           $maxAttempts = 30
           $attempt = 0
           $tunnelUrl = $null
           while ($attempt -lt $maxAttempts) {
             Start-Sleep -Seconds 2
-            if (Test-Path $logFile) {
-              $content = Get-Content $logFile -Raw
-              # Look for the trycloudflare.com URL
+            if (Test-Path $outFile) {
+              $content = Get-Content $outFile -Raw
               if ($content -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
                 $tunnelUrl = $matches[0]
                 break
@@ -158,8 +155,10 @@ jobs:
           }
 
           if (-not $tunnelUrl) {
-            Write-Host "❌ Could not retrieve tunnel URL. Log content:"
-            Get-Content $logFile
+            Write-Host "❌ Could not retrieve tunnel URL. stdout log:"
+            Get-Content $outFile
+            Write-Host "stderr log:"
+            Get-Content $errFile
             exit 1
           }
 
@@ -173,7 +172,7 @@ jobs:
           Write-Host "  (The noVNC interface will load – click Connect)"
           Write-Host "============================================"
 
-          # Keep the tunnel alive by waiting for cloudflared to exit (it shouldn't)
+          # Keep the tunnel alive
           Wait-Process -Name cloudflared
 
       - name: Lock down to only the app
