@@ -58,7 +58,10 @@ jobs:
             Write-Host "❌ winvnc.exe not found"
             exit 1
           }
-          Start-Process -FilePath $vncServer -ArgumentList "-run -passwd $password" -WindowStyle Hidden
+          # Set password in registry (persistent)
+          & $vncServer -passwd $password
+          # Start the server (uses stored password)
+          Start-Process -FilePath $vncServer -ArgumentList "-run" -WindowStyle Hidden
           Start-Sleep -Seconds 5
           netstat -an | findstr :5900
           if ($LASTEXITCODE -ne 0) {
@@ -66,7 +69,7 @@ jobs:
             Get-Process -Name winvnc -ErrorAction SilentlyContinue
             exit 1
           }
-          Write-Host "✅ VNC server running on port 5900"
+          Write-Host "✅ VNC server running on port 5900 with password set"
 
       - name: Setup noVNC web client
         run: |
@@ -74,10 +77,14 @@ jobs:
           if (-not (Test-Path "C:\noVNC")) {
             git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
           }
+          # Create index.html redirect to vnc.html
+          echo '<meta http-equiv="refresh" content="0;url=vnc.html">' > C:\noVNC\index.html
+
           $conn = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
           if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }
           Start-Sleep -Seconds 2
           Start-Process -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC 6080 localhost:5900" -WindowStyle Hidden -PassThru
+
           $maxAttempts = 15
           $attempt = 0
           while ($attempt -lt $maxAttempts) {
@@ -129,13 +136,11 @@ jobs:
           }
 
           Write-Host "============================================"
-          Write-Host "  WEB VNC READY – Eiciel OS KIOSK"
+          Write-Host "  🖥️  VNC READY – Eiciel OS"
           Write-Host "============================================"
-          Write-Host ""
           Write-Host "  Open this URL in your browser: $tunnelUrl"
+          Write-Host "  (auto-redirects to VNC client)"
           Write-Host "  VNC Password: P@ssw0rd123!"
-          Write-Host ""
-          Write-Host "  (The noVNC interface will load – click Connect)"
           Write-Host "============================================"
 
           Wait-Process -Name cloudflared
