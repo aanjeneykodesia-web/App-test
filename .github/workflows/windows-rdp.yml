@@ -126,11 +126,44 @@ jobs:
 
       - name: Setup noVNC
         run: |
-          git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
-          git clone --depth=1 https://github.com/novnc/websockify.git C:\websockify
+          # Clone repos if not already present (in case of retry)
+          if (-not (Test-Path "C:\noVNC")) {
+            git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
+          }
+          if (-not (Test-Path "C:\websockify")) {
+            git clone --depth=1 https://github.com/novnc/websockify.git C:\websockify
+          }
+
+          # Kill any previous python processes on port 6080 (just in case)
+          $existing = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
+          if ($existing) {
+            $existing | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+            Start-Sleep -Seconds 2
+          }
+
+          # Start websockify with noVNC web directory
           Start-Process -FilePath "python" -ArgumentList "C:\websockify\websockify.py --web C:\noVNC 6080 localhost:5900" -WindowStyle Hidden
-          Start-Sleep -Seconds 3
-          Write-Host "✅ noVNC running on http://localhost:6080"
+          Start-Sleep -Seconds 5
+
+          # Verify noVNC is responding
+          try {
+            $response = Invoke-WebRequest -Uri "http://localhost:6080" -UseBasicParsing -TimeoutSec 5
+            Write-Host "✅ noVNC responded with status $($response.StatusCode)"
+          } catch {
+            Write-Host "❌ noVNC not responding on port 6080. Retrying with fallback port..."
+            # Fallback: use a simple Python HTTP server to serve noVNC (if websockify fails)
+            # But we need websockify for VNC. Let's try starting websockify with explicit Python path.
+            Start-Process -FilePath "python" -ArgumentList "C:\websockify\websockify.py --web C:\noVNC 6080 localhost:5900" -WindowStyle Hidden
+            Start-Sleep -Seconds 5
+            try {
+              $response = Invoke-WebRequest -Uri "http://localhost:6080" -UseBasicParsing -TimeoutSec 5
+              Write-Host "✅ noVNC responded on second attempt."
+            } catch {
+              Write-Host "❌ noVNC still not responding. Please check manually."
+              Get-Process -Name python -ErrorAction SilentlyContinue
+              exit 1
+            }
+          }
 
       - name: Expose web VNC via Cloudflare
         run: |
@@ -143,7 +176,6 @@ jobs:
           $tunnelUrl = $null
           while ($attempt -lt $maxAttempts) {
             Start-Sleep -Seconds 2
-            # Check both stdout and stderr files
             $files = @($outFile, $errFile)
             foreach ($f in $files) {
               if (Test-Path $f) {
