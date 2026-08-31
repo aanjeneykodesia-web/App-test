@@ -1,59 +1,136 @@
-name: Build & Test
+name: RDP - Kiosk Mode (Eiciel OS)
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
-  build:
+  rdp-session:
     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 18
-      - name: Build
-        run: bash build-and-test.sh
-        shell: bash
-      - name: Upload artifact (.exe)
-        uses: actions/upload-artifact@v4
-        with:
-          name: EicielOS-win32-x64
-          path: eiciel-electron/EicielOS-win32-x64/
+    timeout-minutes: 9999
 
-  test:
-    runs-on: ubuntu-latest
-    needs: build
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - name: Checkout your app source
+        uses: actions/checkout@v4
         with:
-          node-version: 18
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y xvfb python3 python3-pip default-jdk ffmpeg
-      - name: Run script (skip build)
+          path: app
+
+      - name: Build Eiciel OS
         run: |
-          chmod +x build-and-test.sh
-          ./build-and-test.sh
+          cd app
+          bash build-and-test.sh
+        shell: bash
         env:
-          CI: true
-      - name: Install Playwright browsers
+          CI: ""
+
+      - name: Setup Cloudflared
+        uses: AnimMouse/setup-cloudflared@v2
+
+      - name: Install UltraVNC
         run: |
-          cd eiciel-electron
-          npx playwright install chromium
-      - name: Run tests with xvfb
+          choco install ultravnc -y --limit-output
+          Start-Sleep -Seconds 10
+          $installDir = "C:\Program Files\uvnc bvba\UltraVNC"
+          if (-not (Test-Path $installDir)) {
+            $searchPaths = @(
+              "C:\Program Files\UltraVNC",
+              "C:\Program Files (x86)\UltraVNC",
+              "C:\Program Files\uvnc bvba\UltraVNC"
+            )
+            foreach ($p in $searchPaths) {
+              if (Test-Path $p) { $installDir = $p; break }
+            }
+          }
+          if (-not (Test-Path $installDir)) {
+            Write-Host "❌ UltraVNC not found"
+            exit 1
+          }
+          echo "VNC_PATH=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "✅ UltraVNC installed at $installDir"
+
+      - name: Configure VNC for empty password (registry)
         run: |
-          cd eiciel-electron
-          xvfb-run --auto-servernum -- npm test
-      - name: Convert WebM to MP4
+          # Ensure registry keys exist
+          New-Item -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Force | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "AllowNullPassword" -Value 1 -Type DWord
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "AuthRequired" -Value 0 -Type DWord
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "UseRegistry" -Value 1 -Type DWord
+          # Explicitly set a zero-length password (16 null bytes)
+          $emptyPass = [byte[]]@(0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00)
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "Password" -Value $emptyPass -Type Binary
+          Write-Host "✅ VNC registry configured for empty password"
+
+      - name: Start VNC server (restart to apply changes)
         run: |
-          cd eiciel-electron
-          find test-results -name "*.webm" -exec sh -c 'ffmpeg -i "$0" -c:v libx264 -preset fast -crf 23 -y "${0%.webm}.mp4" && rm "$0"' {} \;
-      - name: Upload test results
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: playwright-test-results
-          path: eiciel-electron/test-results/
+          Get-Process -Name winvnc -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          Start-Process -FilePath "$env:VNC_PATH\winvnc.exe" -ArgumentList "-run" -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          # Verify listening on all interfaces
+          $listening = netstat -an | Select-String ":5900"
+          if ($listening) {
+            Write-Host "✅ VNC server listening on port 5900"
+            Write-Host $listening
+          } else {
+            Write-Host "❌ VNC server is not listening on port 5900"
+            exit 1
+          }
+
+      - name: Expose VNC via Cloudflare TCP tunnel
+        run: |
+          # Start cloudflared in the background and capture its output
+          $logFile = "$env:TEMP\cloudflared.log"
+          $psi = New-Object System.Diagnostics.ProcessStartInfo
+          $psi.FileName = "cloudflared"
+          $psi.Arguments = "tunnel --url tcp://localhost:5900 --loglevel debug"
+          $psi.RedirectStandardOutput = $true
+          $psi.RedirectStandardError = $true
+          $psi.UseShellExecute = $false
+          $psi.CreateNoWindow = $true
+          $p = [System.Diagnostics.Process]::Start($psi)
+
+          $timeout = 60  # seconds to wait for the URL
+          $sw = [System.Diagnostics.Stopwatch]::StartNew()
+          $tunnelUrl = $null
+
+          while ($sw.Elapsed.TotalSeconds -lt $timeout) {
+            # Read output lines if available
+            if ($p.StandardOutput.Peek() -ge 0) {
+              $line = $p.StandardOutput.ReadLine()
+              Write-Host "cloudflared: $line"
+              if ($line -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
+                $tunnelUrl = $matches[0]
+                break
+              }
+            }
+            if ($p.StandardError.Peek() -ge 0) {
+              $errLine = $p.StandardError.ReadLine()
+              Write-Host "cloudflared (stderr): $errLine"
+            }
+            Start-Sleep -Milliseconds 500
+          }
+
+          if (-not $tunnelUrl) {
+            Write-Host "❌ Failed to obtain tunnel URL within $timeout seconds."
+            Write-Host "Cloudflared may have exited. Check the logs above."
+            # Kill the process to clean up
+            $p.Kill()
+            exit 1
+          }
+
+          $hostname = $tunnelUrl -replace 'https://',''
+          Write-Host "============================================"
+          Write-Host "  🖥️  VNC READY – Eiciel OS"
+          Write-Host "============================================"
+          Write-Host "  Connect using any VNC client:"
+          Write-Host "  Host: $hostname"
+          Write-Host "  Port: 5900"
+          Write-Host "  Password: (leave blank)"
+          Write-Host "============================================"
+          Write-Host "  The tunnel will stay active until this job is cancelled."
+          Write-Host "  To stop, cancel the workflow run in GitHub."
+
+          # Keep the job alive – wait for cloudflared to exit (it never will normally)
+          $p.WaitForExit()
