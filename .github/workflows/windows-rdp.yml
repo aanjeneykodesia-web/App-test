@@ -28,6 +28,7 @@ jobs:
       - name: Setup Cloudflared
         uses: AnimMouse/setup-cloudflared@v2
 
+      # --- 1. Install and configure TightVNC ---
       - name: Install TightVNC
         run: |
           choco install tightvnc -y --limit-output
@@ -53,7 +54,7 @@ jobs:
           $password = "1234"
           $passFile = "$env:TEMP\vncpass.txt"
           Set-Content -Path $passFile -Value $password -NoNewline
-          Write-Host "✅ Password file created at $passFile"
+          Write-Host "✅ Password file created"
 
           Get-Process -Name tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
@@ -64,17 +65,49 @@ jobs:
           $listening = netstat -an | Select-String ":5900"
           if ($listening) {
             Write-Host "✅ VNC server listening on port 5900"
-            Write-Host $listening
           } else {
             Write-Host "❌ VNC server not listening"
             exit 1
           }
 
-      - name: Expose VNC via Cloudflare TCP tunnel
+      # --- 2. Clone noVNC and start the proxy ---
+      - name: Clone and setup noVNC
         run: |
-          $outFile = "$env:TEMP\cf_out.log"
-          $errFile = "$env:TEMP\cf_err.log"
-          $proc = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url tcp://localhost:5900 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          git clone https://github.com/novnc/noVNC.git
+          cd noVNC
+          # Install Python and websockify (dependency for the proxy)
+          choco install python -y --limit-output
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          python -m pip install --upgrade pip
+          pip install websockify
+          Write-Host "✅ noVNC cloned and dependencies installed"
+
+      - name: Start noVNC proxy
+        run: |
+          # Kill any existing processes that might use the ports
+          Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force
+          Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+
+          cd noVNC
+          # The novnc_proxy script automatically downloads and starts websockify,
+          # serving the noVNC client on port 6080 and connecting to the VNC server on port 5900[reference:1]
+          Start-Process -FilePath "python" -ArgumentList "utils/novnc_proxy --vnc localhost:5900 --listen 6080" -WindowStyle Hidden -PassThru
+
+          Start-Sleep -Seconds 10
+          netstat -an | findstr :6080
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "❌ noVNC proxy not listening on 6080"
+            exit 1
+          }
+          Write-Host "✅ noVNC proxy running on port 6080"
+
+      # --- 3. Expose noVNC via Cloudflare HTTP tunnel ---
+      - name: Expose noVNC via Cloudflare HTTP tunnel
+        run: |
+          $outFile = "$env:TEMP\cf_http_out.log"
+          $errFile = "$env:TEMP\cf_http_err.log"
+          $proc = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
           Write-Host "Cloudflared PID: $($proc.Id)"
 
           $timeout = 90
@@ -82,12 +115,10 @@ jobs:
           $tunnelUrl = $null
 
           while ($sw.Elapsed.TotalSeconds -lt $timeout) {
-            # Read stdout lines
             if (Test-Path $outFile) {
               $lines = Get-Content $outFile -ErrorAction SilentlyContinue
               foreach ($line in $lines) {
                 if ($line -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
-                  # Use -replace to extract the URL instead of $matches
                   $tunnelUrl = $line -replace '.*(https://[a-z0-9-]+\.trycloudflare\.com).*', '$1'
                   break
                 }
@@ -95,7 +126,6 @@ jobs:
             }
             if ($tunnelUrl) { break }
 
-            # Read stderr lines
             if (Test-Path $errFile) {
               $errLines = Get-Content $errFile -ErrorAction SilentlyContinue
               foreach ($line in $errLines) {
@@ -111,7 +141,7 @@ jobs:
           }
 
           if (-not $tunnelUrl) {
-            Write-Host "❌ No tunnel URL found within $timeout seconds."
+            Write-Host "❌ No tunnel URL found."
             Write-Host "stdout tail:"
             Get-Content $outFile -Tail 20 -ErrorAction SilentlyContinue
             Write-Host "stderr tail:"
@@ -120,19 +150,16 @@ jobs:
             exit 1
           }
 
-          $hostname = $tunnelUrl -replace 'https://',''
           Write-Host "============================================"
-          Write-Host "  🖥️  VNC READY – Eiciel OS"
+          Write-Host "  🌐 noVNC READY – Eiciel OS"
           Write-Host "============================================"
-          Write-Host "  Connect using any VNC client:"
-          Write-Host "  Host: $hostname"
-          Write-Host "  Port: 5900"
+          Write-Host "  Open this URL in your browser:"
+          Write-Host "  $tunnelUrl"
           Write-Host "  Password: 1234"
           Write-Host "============================================"
-          Write-Host "  Tunnel is active – keep this workflow running."
-          Write-Host "  Cancel the run when you're done."
+          Write-Host "  The tunnel stays active until you cancel the workflow."
 
-          # Keep alive – monitor cloudflared
+          # Keep alive
           while ($true) {
             Start-Sleep -Seconds 30
             if ($proc.HasExited) {
