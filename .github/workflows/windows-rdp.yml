@@ -25,128 +25,39 @@ jobs:
         env:
           CI: ""
 
-      # ---------- TightVNC ----------
-      - name: Install TightVNC
+      # ---------- Enable RDP ----------
+      - name: Enable Remote Desktop
         run: |
-          choco install tightvnc -y --limit-output
-          $installDir = "C:\Program Files\TightVNC"
-          if (-not (Test-Path $installDir)) {
-            $searchPaths = @(
-              "C:\Program Files\TightVNC",
-              "C:\Program Files (x86)\TightVNC"
-            )
-            foreach ($p in $searchPaths) {
-              if (Test-Path $p) { $installDir = $p; break }
-            }
-          }
-          if (-not (Test-Path $installDir)) {
-            Write-Host "❌ TightVNC not found"
-            exit 1
-          }
-          echo "VNC_PATH=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "✅ TightVNC installed at $installDir"
+          # Allow RDP connections
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
+          # Enable Network Level Authentication (optional, but keeps it secure)
+          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1 -Force
+          # Allow RDP through firewall
+          netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
+          Write-Host "✅ Remote Desktop enabled"
 
-      - name: Configure TightVNC with password 1234
+      # ---------- Set a known password for the runner user ----------
+      - name: Set password for runneradmin
         run: |
-          $password = "1234"
-          $passFile = "$env:TEMP\vncpass.txt"
-          Set-Content -Path $passFile -Value $password -NoNewline
-          Write-Host "✅ Password file created"
+          $password = "Password123!"
+          net user runneradmin $password
+          # Add to Administrators group if not already
+          net localgroup Administrators runneradmin /add
+          Write-Host "✅ Password for runneradmin set to: $password"
 
-          Get-Process -Name tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-Sleep -Seconds 2
-
-          Start-Process -FilePath "$env:VNC_PATH\tvnserver.exe" -ArgumentList "-bind -port 5900 -passfile $passFile -service" -WindowStyle Hidden
-          Start-Sleep -Seconds 5
-
-          $listening = netstat -an | Select-String ":5900"
-          if ($listening) {
-            Write-Host "✅ VNC server listening on port 5900"
-          } else {
-            Write-Host "❌ VNC server not listening"
-            exit 1
-          }
-
-      # ---------- Python & websockify ----------
-      - name: Install Python and websockify
-        run: |
-          choco install python -y --limit-output
-          $possiblePaths = @(
-            "C:\hostedtoolcache\windows\Python\3.14.7\x64\python.exe",
-            "C:\hostedtoolcache\windows\Python\3.13.*\x64\python.exe",
-            "C:\hostedtoolcache\windows\Python\3.12.*\x64\python.exe",
-            "C:\Python314\python.exe",
-            "C:\Python313\python.exe",
-            "C:\Python312\python.exe"
-          )
-          $pythonExe = $null
-          foreach ($p in $possiblePaths) {
-            if (Test-Path $p) { $pythonExe = $p; break }
-          }
-          if (-not $pythonExe) {
-            $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
-          }
-          if (-not $pythonExe -or -not (Test-Path $pythonExe)) {
-            Write-Host "❌ Python not found"
-            exit 1
-          }
-          Write-Host "Using Python: $pythonExe"
-
-          & $pythonExe -m pip install --upgrade pip
-          & $pythonExe -m pip install websockify
-          & $pythonExe -c "import websockify"
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "❌ websockify installation failed"
-            exit 1
-          }
-          echo "PYTHON_EXE=$pythonExe" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "✅ websockify installed"
-
-      - name: Start websockify (WebSocket proxy)
-        run: |
-          Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force
-          Start-Sleep -Seconds 2
-
-          $logFile = "$env:TEMP\websockify.log"
-          $errFile = "$env:TEMP\websockify.err"
-          $proc = Start-Process -FilePath "$env:PYTHON_EXE" -ArgumentList "-m websockify 0.0.0.0:6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
-          Write-Host "websockify PID: $($proc.Id)"
-
-          Start-Sleep -Seconds 10
-          $listening = netstat -an | Select-String ":6080"
-          if ($listening) {
-            Write-Host "✅ websockify is listening on port 6080"
-          } else {
-            Write-Host "❌ websockify not listening"
-            Write-Host "--- stdout ---"
-            Get-Content $logFile -ErrorAction SilentlyContinue
-            Write-Host "--- stderr ---"
-            Get-Content $errFile -ErrorAction SilentlyContinue
-            exit 1
-          }
-
-          if ($proc.HasExited) {
-            Write-Host "❌ websockify died unexpectedly"
-            Write-Host "--- stdout ---"
-            Get-Content $logFile -ErrorAction SilentlyContinue
-            Write-Host "--- stderr ---"
-            Get-Content $errFile -ErrorAction SilentlyContinue
-            exit 1
-          }
-          Write-Host "✅ websockify is stable"
-
-      # ---------- ngrok ----------
+      # ---------- Install ngrok ----------
       - name: Install ngrok
         run: |
           choco install ngrok -y --limit-output
-          ngrok authtoken ${{ secrets.NGROK_TOKEN }}
-          Write-Host "✅ ngrok installed and authenticated"
+          Write-Host "✅ ngrok installed"
 
-      - name: Expose WebSocket proxy via ngrok
+      # ---------- Expose RDP via ngrok TCP tunnel ----------
+      - name: Expose RDP via ngrok TCP tunnel
         run: |
           $outFile = "$env:TEMP\ngrok_out.log"
           $errFile = "$env:TEMP\ngrok_err.log"
-          $proc = Start-Process -FilePath "ngrok" -ArgumentList "http 6080 --log=stdout --log-level=debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          # Start ngrok TCP tunnel to port 3389
+          $proc = Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389 --log=stdout --log-level=debug --authtoken=${{ secrets.NGROK_TOKEN }}" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
           Write-Host "ngrok PID: $($proc.Id)"
 
           $timeout = 60
@@ -155,8 +66,9 @@ jobs:
           while ($sw.Elapsed.TotalSeconds -lt $timeout) {
             if (Test-Path $outFile) {
               $content = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
-              if ($content -match 'https://([a-z0-9-]+\.ngrok\.io)') {
-                $tunnelUrl = "https://$($matches[1])"
+              # ngrok TCP URL looks like: tcp://0.tcp.ngrok.io:12345
+              if ($content -match 'tcp://([0-9a-z.-]+):(\d+)') {
+                $tunnelUrl = "$($matches[1]):$($matches[2])"
                 break
               }
             }
@@ -164,26 +76,24 @@ jobs:
           }
 
           if (-not $tunnelUrl) {
-            Write-Host "❌ No ngrok URL found."
+            Write-Host "❌ No ngrok TCP URL found."
             Write-Host "stdout tail:"
             Get-Content $outFile -Tail 30 -ErrorAction SilentlyContinue
             Write-Host "stderr tail:"
             Get-Content $errFile -Tail 30 -ErrorAction SilentlyContinue
-            Stop-Process -Id $proc.Id -Force
+            if (-not $proc.HasExited) {
+              Stop-Process -Id $proc.Id -Force
+            }
             exit 1
           }
 
           Write-Host "============================================"
-          Write-Host "  🌐 WebSocket Proxy READY – Eiciel OS"
+          Write-Host "  🖥️  RDP READY – Eiciel OS"
           Write-Host "============================================"
-          Write-Host "  Your VNC WebSocket endpoint:"
-          Write-Host "  $tunnelUrl/websockify"
-          Write-Host ""
-          Write-Host "  Configure your noVNC client (on Vercel) with:"
-          Write-Host "  - Host: $($tunnelUrl -replace 'https://','')"
-          Write-Host "  - Port: 443"
-          Write-Host "  - Path: /websockify"
-          Write-Host "  - Password: 1234"
+          Write-Host "  Remote Desktop Connection:"
+          Write-Host "  Computer: $tunnelUrl"
+          Write-Host "  Username: runneradmin"
+          Write-Host "  Password: Password123!"
           Write-Host "============================================"
           Write-Host "  Tunnel stays active until you cancel the workflow."
 
