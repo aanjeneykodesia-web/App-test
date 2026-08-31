@@ -77,7 +77,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install --force-reinstall websockify
           Write-Host "Verifying websockify installation..."
-          python -c "import websockify; print('websockify version:', websockify.__version__)"
+          python -c "import websockify"
           if ($LASTEXITCODE -eq 0) {
             Write-Host "✅ websockify installed and verified"
           } else {
