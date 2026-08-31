@@ -144,16 +144,17 @@ jobs:
 
       - name: Expose WebSocket proxy via ngrok
         run: |
-          $logFile = "$env:TEMP\ngrok.log"
-          $proc = Start-Process -FilePath "ngrok" -ArgumentList "http 6080 --log=stdout --log-level=debug" -RedirectStandardOutput $logFile -RedirectStandardError $logFile -WindowStyle Hidden -PassThru
+          $outFile = "$env:TEMP\ngrok_out.log"
+          $errFile = "$env:TEMP\ngrok_err.log"
+          $proc = Start-Process -FilePath "ngrok" -ArgumentList "http 6080 --log=stdout --log-level=debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
           Write-Host "ngrok PID: $($proc.Id)"
 
           $timeout = 60
           $sw = [System.Diagnostics.Stopwatch]::StartNew()
           $tunnelUrl = $null
           while ($sw.Elapsed.TotalSeconds -lt $timeout) {
-            if (Test-Path $logFile) {
-              $content = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+            if (Test-Path $outFile) {
+              $content = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
               if ($content -match 'https://([a-z0-9-]+\.ngrok\.io)') {
                 $tunnelUrl = "https://$($matches[1])"
                 break
@@ -164,8 +165,10 @@ jobs:
 
           if (-not $tunnelUrl) {
             Write-Host "❌ No ngrok URL found."
-            Write-Host "Log tail:"
-            Get-Content $logFile -Tail 30 -ErrorAction SilentlyContinue
+            Write-Host "stdout tail:"
+            Get-Content $outFile -Tail 30 -ErrorAction SilentlyContinue
+            Write-Host "stderr tail:"
+            Get-Content $errFile -Tail 30 -ErrorAction SilentlyContinue
             Stop-Process -Id $proc.Id -Force
             exit 1
           }
