@@ -69,22 +69,35 @@ jobs:
             exit 1
           }
 
-      - name: Clone noVNC and install websockify
+      - name: Clone noVNC and install websockify (using specific Python)
         run: |
           git clone https://github.com/novnc/noVNC.git
           choco install python -y --limit-output
-          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
-          python -m pip install --upgrade pip
-          python -m pip install --force-reinstall websockify
+
+          # Find the newly installed Python (expected location)
+          $pythonExe = "C:\hostedtoolcache\windows\Python\3.14.7\x64\python.exe"
+          if (-not (Test-Path $pythonExe)) {
+            Write-Host "❌ Python 3.14.7 not found at $pythonExe"
+            exit 1
+          }
+          Write-Host "Using Python: $pythonExe"
+
+          # Upgrade pip and install websockify with this Python
+          & $pythonExe -m pip install --upgrade pip
+          & $pythonExe -m pip install --force-reinstall websockify
+
           Write-Host "Verifying websockify installation..."
-          python -c "import websockify"
+          & $pythonExe -c "import websockify" 
           if ($LASTEXITCODE -eq 0) {
             Write-Host "✅ websockify installed and verified"
           } else {
-            Write-Host "❌ websockify module not found. Installed packages:"
-            python -m pip list
+            Write-Host "❌ websockify module not found."
+            & $pythonExe -m pip list
             exit 1
           }
+
+          # Store the Python path for later steps
+          echo "PYTHON_EXE=$pythonExe" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Start websockify (serving noVNC web interface)
         run: |
@@ -94,7 +107,9 @@ jobs:
           cd noVNC
           $logFile = "$env:TEMP\websockify.log"
           $errFile = "$env:TEMP\websockify.err"
-          $proc = Start-Process -FilePath "python" -ArgumentList "-m websockify --web . 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+
+          # Use the specific Python we installed
+          $proc = Start-Process -FilePath "$env:PYTHON_EXE" -ArgumentList "-m websockify --web . 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
           Write-Host "websockify PID: $($proc.Id)"
 
           Start-Sleep -Seconds 10
