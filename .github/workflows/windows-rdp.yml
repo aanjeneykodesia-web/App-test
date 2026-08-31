@@ -9,7 +9,7 @@ env:
 jobs:
   build-and-test:
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
 
     steps:
       - name: Checkout your app source
@@ -30,18 +30,12 @@ jobs:
           cd app
           npx playwright install chromium
 
-      - name: Run Playwright tests (functional + security bot)
+      - name: Run functional Playwright tests
         run: |
           cd app
-          npm run test
-        shell: bash
-        env:
-          CI: ""
+          npx playwright test
 
-      - name: Run security bot attacks (separate suite)
+      - name: Run security bot attacks
         run: |
           cd app
-          npm run test:attack
-        shell: bash
-        env:
-          CI: ""
+          npx playwright test bot-attack.spec.js
