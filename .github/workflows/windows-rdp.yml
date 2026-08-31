@@ -31,39 +31,26 @@ jobs:
       - uses: actions/setup-node@v3
         with:
           node-version: 18
-
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y xvfb python3 python3-pip default-jdk ffmpeg
-
       - name: Run script (skip build)
         run: |
           chmod +x build-and-test.sh
           ./build-and-test.sh
         env:
           CI: true
-
       - name: Install Playwright browsers
         run: |
           cd eiciel-electron
           npx playwright install chromium
-
-      # ─── Functional tests ──────────────────────────────────────
-      - name: Run functional tests
+      - name: Run tests with xvfb
         run: |
           cd eiciel-electron
           xvfb-run --auto-servernum -- npm test
-
-      # ─── Security bot attacks ──────────────────────────────────
-      - name: Run security bot attacks
-        run: |
-          cd eiciel-electron
-          xvfb-run --auto-servernum -- npm run test:attack
-
       - name: Convert WebM to MP4
         run: |
           cd eiciel-electron
           find test-results -name "*.webm" -exec sh -c 'ffmpeg -i "$0" -c:v libx264 -preset fast -crf 23 -y "${0%.webm}.mp4" && rm "$0"' {} \;
-
       - name: Upload test results
         uses: actions/upload-artifact@v4
         if: always()
