@@ -28,21 +28,22 @@ jobs:
       # ---------- Enable RDP ----------
       - name: Enable Remote Desktop
         run: |
-          # Allow RDP connections
           Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
-          # Enable Network Level Authentication (optional, but keeps it secure)
           Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1 -Force
-          # Allow RDP through firewall
           netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
           Write-Host "✅ Remote Desktop enabled"
 
-      # ---------- Set a known password for the runner user ----------
+      # ---------- Set password and ensure admin membership ----------
       - name: Set password for runneradmin
         run: |
           $password = "Password123!"
+          # Set the password (user exists by default)
           net user runneradmin $password
-          # Add to Administrators group if not already
-          net localgroup Administrators runneradmin /add
+          # Add to Administrators group if not already a member
+          $members = net localgroup Administrators | Select-String "runneradmin"
+          if (-not $members) {
+            net localgroup Administrators runneradmin /add
+          }
           Write-Host "✅ Password for runneradmin set to: $password"
 
       # ---------- Install ngrok ----------
@@ -56,7 +57,6 @@ jobs:
         run: |
           $outFile = "$env:TEMP\ngrok_out.log"
           $errFile = "$env:TEMP\ngrok_err.log"
-          # Start ngrok TCP tunnel to port 3389
           $proc = Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389 --log=stdout --log-level=debug --authtoken=${{ secrets.NGROK_TOKEN }}" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
           Write-Host "ngrok PID: $($proc.Id)"
 
@@ -66,7 +66,6 @@ jobs:
           while ($sw.Elapsed.TotalSeconds -lt $timeout) {
             if (Test-Path $outFile) {
               $content = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
-              # ngrok TCP URL looks like: tcp://0.tcp.ngrok.io:12345
               if ($content -match 'tcp://([0-9a-z.-]+):(\d+)') {
                 $tunnelUrl = "$($matches[1]):$($matches[2])"
                 break
