@@ -52,12 +52,10 @@ jobs:
 
       - name: Configure VNC for empty password (registry)
         run: |
-          # Ensure registry keys exist
           New-Item -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Force | Out-Null
           Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "AllowNullPassword" -Value 1 -Type DWord
           Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "AuthRequired" -Value 0 -Type DWord
           Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "UseRegistry" -Value 1 -Type DWord
-          # Explicitly set a zero-length password (16 null bytes)
           $emptyPass = [byte[]]@(0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00)
           Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "Password" -Value $emptyPass -Type Binary
           Write-Host "✅ VNC registry configured for empty password"
@@ -68,7 +66,6 @@ jobs:
           Start-Sleep -Seconds 2
           Start-Process -FilePath "$env:VNC_PATH\winvnc.exe" -ArgumentList "-run" -WindowStyle Hidden
           Start-Sleep -Seconds 5
-          # Verify listening on all interfaces
           $listening = netstat -an | Select-String ":5900"
           if ($listening) {
             Write-Host "✅ VNC server listening on port 5900"
@@ -77,46 +74,54 @@ jobs:
             Write-Host "❌ VNC server is not listening on port 5900"
             exit 1
           }
+          Test-NetConnection -ComputerName localhost -Port 5900 -InformationLevel Quiet
+          if ($?) { Write-Host "✅ Local connection to VNC succeeded" } else { Write-Host "⚠️ Local connection failed – tunnel may not work" }
 
       - name: Expose VNC via Cloudflare TCP tunnel
         run: |
-          # Start cloudflared in the background and capture its output
-          $logFile = "$env:TEMP\cloudflared.log"
-          $psi = New-Object System.Diagnostics.ProcessStartInfo
-          $psi.FileName = "cloudflared"
-          $psi.Arguments = "tunnel --url tcp://localhost:5900 --loglevel debug"
-          $psi.RedirectStandardOutput = $true
-          $psi.RedirectStandardError = $true
-          $psi.UseShellExecute = $false
-          $psi.CreateNoWindow = $true
-          $p = [System.Diagnostics.Process]::Start($psi)
+          $outFile = "$env:TEMP\cf_out.log"
+          $errFile = "$env:TEMP\cf_err.log"
+          # Start cloudflared and redirect both streams to files
+          $proc = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url tcp://localhost:5900 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          Write-Host "Cloudflared process started with PID $($proc.Id)"
 
-          $timeout = 60  # seconds to wait for the URL
+          $timeout = 90  # seconds
           $sw = [System.Diagnostics.Stopwatch]::StartNew()
           $tunnelUrl = $null
+          $lastLogSize = 0
 
           while ($sw.Elapsed.TotalSeconds -lt $timeout) {
-            # Read output lines if available
-            if ($p.StandardOutput.Peek() -ge 0) {
-              $line = $p.StandardOutput.ReadLine()
-              Write-Host "cloudflared: $line"
-              if ($line -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
+            # Read new content from both log files
+            if (Test-Path $outFile) {
+              $content = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
+              if ($content -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
                 $tunnelUrl = $matches[0]
                 break
               }
             }
-            if ($p.StandardError.Peek() -ge 0) {
-              $errLine = $p.StandardError.ReadLine()
-              Write-Host "cloudflared (stderr): $errLine"
+            if (Test-Path $errFile) {
+              $errContent = Get-Content $errFile -Raw -ErrorAction SilentlyContinue
+              if ($errContent -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
+                $tunnelUrl = $matches[0]
+                break
+              }
             }
-            Start-Sleep -Milliseconds 500
+
+            # Print a status update every 10 seconds
+            if ($sw.Elapsed.TotalSeconds % 10 -lt 1) {
+              Write-Host "Still waiting for tunnel URL... ($([math]::Round($sw.Elapsed.TotalSeconds))s elapsed)"
+            }
+
+            Start-Sleep -Seconds 1
           }
 
           if (-not $tunnelUrl) {
-            Write-Host "❌ Failed to obtain tunnel URL within $timeout seconds."
-            Write-Host "Cloudflared may have exited. Check the logs above."
-            # Kill the process to clean up
-            $p.Kill()
+            Write-Host "❌ No tunnel URL found within $timeout seconds."
+            Write-Host "Last 20 lines of stdout:"
+            Get-Content $outFile -Tail 20 -ErrorAction SilentlyContinue
+            Write-Host "Last 20 lines of stderr:"
+            Get-Content $errFile -Tail 20 -ErrorAction SilentlyContinue
+            Stop-Process -Id $proc.Id -Force
             exit 1
           }
 
@@ -129,8 +134,19 @@ jobs:
           Write-Host "  Port: 5900"
           Write-Host "  Password: (leave blank)"
           Write-Host "============================================"
-          Write-Host "  The tunnel will stay active until this job is cancelled."
-          Write-Host "  To stop, cancel the workflow run in GitHub."
+          Write-Host "  The tunnel is active. This step will stay running"
+          Write-Host "  until you cancel the workflow."
+          Write-Host "  To stop, go to GitHub Actions and cancel this run."
 
-          # Keep the job alive – wait for cloudflared to exit (it never will normally)
-          $p.WaitForExit()
+          # Keep the job alive without blocking forever – check process health
+          while ($true) {
+            Start-Sleep -Seconds 30
+            if ($proc.HasExited) {
+              Write-Host "❌ Cloudflared process has exited. Tunnel is down."
+              exit 1
+            }
+            # Optionally, print a heartbeat every 2 minutes
+            if ((Get-Date).Minute % 2 -eq 0 -and (Get-Date).Second -lt 5) {
+              Write-Host "💓 Tunnel still running (PID $($proc.Id))"
+            }
+          }
