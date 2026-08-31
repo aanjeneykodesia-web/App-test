@@ -25,11 +25,9 @@ jobs:
         env:
           CI: ""
 
-      # ---------- Cloudflare tunnel binary ----------
       - name: Setup Cloudflared
         uses: AnimMouse/setup-cloudflared@v2
 
-      # ---------- VNC server (TightVNC) ----------
       - name: Install TightVNC
         run: |
           choco install tightvnc -y --limit-output
@@ -71,26 +69,34 @@ jobs:
             exit 1
           }
 
-      # ---------- noVNC + websockify ----------
+      # ---------- FIXED: noVNC + websockify ----------
       - name: Clone noVNC and install websockify
         run: |
           git clone https://github.com/novnc/noVNC.git
           choco install python -y --limit-output
+          # Force refresh PATH
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          # Upgrade pip and install websockify with --force-reinstall
           python -m pip install --upgrade pip
-          pip install websockify
-          Write-Host "✅ noVNC cloned and websockify installed"
+          python -m pip install --force-reinstall websockify
+          # Verify installation
+          Write-Host "Verifying websockify installation..."
+          python -m websockify --version
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "❌ websockify module not found. Installed packages:"
+            python -m pip list
+            exit 1
+          }
+          Write-Host "✅ websockify installed successfully"
 
       - name: Start websockify (serving noVNC web interface)
         run: |
-          # Kill any existing Python processes that might use ports
           Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
 
           cd noVNC
           $logFile = "$env:TEMP\websockify.log"
           $errFile = "$env:TEMP\websockify.err"
-          # Use python -m websockify to avoid PATH issues
           $proc = Start-Process -FilePath "python" -ArgumentList "-m websockify --web . 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
           Write-Host "websockify PID: $($proc.Id)"
 
@@ -107,7 +113,6 @@ jobs:
             exit 1
           }
 
-      # ---------- Cloudflare HTTP tunnel ----------
       - name: Expose noVNC via Cloudflare HTTP tunnel
         run: |
           $outFile = "$env:TEMP\cf_http_out.log"
@@ -164,7 +169,6 @@ jobs:
           Write-Host "============================================"
           Write-Host "  The tunnel stays active until you cancel the workflow."
 
-          # Keep the job alive and monitor cloudflared
           while ($true) {
             Start-Sleep -Seconds 30
             if ($proc.HasExited) {
