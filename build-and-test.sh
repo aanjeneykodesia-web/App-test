@@ -1753,6 +1753,7 @@ module.exports = defineConfig({
 EOF
 
 # ─── tests/app.spec.js ─────────────────────────────────────────
+mkdir -p tests
 cat > tests/app.spec.js << 'EOF'
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'path';
