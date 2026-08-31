@@ -15,6 +15,7 @@ cat > package.json << 'EOF'
   "scripts": {
     "start": "electron .",
     "test": "npx playwright test",
+    "test:attack": "npx playwright test bot-attack.spec.js",
     "build": "electron-packager . EicielOS --platform=win32 --arch=x64 --out=D:/data/EicielOS --overwrite --asar"
   },
   "dependencies": {
