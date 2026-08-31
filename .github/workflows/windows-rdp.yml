@@ -25,10 +25,11 @@ jobs:
         env:
           CI: ""
 
+      # ---------- Cloudflare tunnel binary ----------
       - name: Setup Cloudflared
         uses: AnimMouse/setup-cloudflared@v2
 
-      # --- 1. Install and configure TightVNC ---
+      # ---------- VNC server (TightVNC) ----------
       - name: Install TightVNC
         run: |
           choco install tightvnc -y --limit-output
@@ -70,8 +71,8 @@ jobs:
             exit 1
           }
 
-      # --- 2. Clone noVNC and install websockify ---
-      - name: Clone noVNC and install dependencies
+      # ---------- noVNC + websockify ----------
+      - name: Clone noVNC and install websockify
         run: |
           git clone https://github.com/novnc/noVNC.git
           choco install python -y --limit-output
@@ -82,21 +83,17 @@ jobs:
 
       - name: Start websockify (serving noVNC web interface)
         run: |
-          # Kill any existing processes that may use ports 6080 or 5900
+          # Kill any existing Python processes that might use ports
           Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force
-          Get-Process -Name websockify -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
 
-          # Change to the noVNC directory
           cd noVNC
-
-          # Start websockify in the background with output logging
           $logFile = "$env:TEMP\websockify.log"
           $errFile = "$env:TEMP\websockify.err"
-          $proc = Start-Process -FilePath "websockify" -ArgumentList "--web . 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          # Use python -m websockify to avoid PATH issues
+          $proc = Start-Process -FilePath "python" -ArgumentList "-m websockify --web . 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
           Write-Host "websockify PID: $($proc.Id)"
 
-          # Wait a few seconds and check if port 6080 is listening
           Start-Sleep -Seconds 10
           $listening = netstat -an | Select-String ":6080"
           if ($listening) {
@@ -110,7 +107,7 @@ jobs:
             exit 1
           }
 
-      # --- 3. Expose noVNC via Cloudflare HTTP tunnel ---
+      # ---------- Cloudflare HTTP tunnel ----------
       - name: Expose noVNC via Cloudflare HTTP tunnel
         run: |
           $outFile = "$env:TEMP\cf_http_out.log"
@@ -167,7 +164,7 @@ jobs:
           Write-Host "============================================"
           Write-Host "  The tunnel stays active until you cancel the workflow."
 
-          # Keep alive
+          # Keep the job alive and monitor cloudflared
           while ($true) {
             Start-Sleep -Seconds 30
             if ($proc.HasExited) {
