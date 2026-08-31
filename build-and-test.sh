@@ -1753,141 +1753,141 @@ module.exports = defineConfig({
 EOF
 
 # ─── tests/app.spec.js ─────────────────────────────────────────
-mkdir -p tests
 cat > tests/app.spec.js << 'EOF'
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'path';
 
-let app, window;
+test.describe('Eiciel OS Functional Tests', () => {
+  let app, window;
 
-async function openAppWindow(appName) {
-  const icon = window.locator(`.desktop-icons .icon[data-app="${appName}"]`);
-  await icon.click();
-  const win = window.locator(`#${appName}Window`);
-  await expect(win).toBeVisible();
-  return win;
-}
-
-async function runTerminalCommand(cmd, expectedSubstring) {
-  const termWin = await openAppWindow('terminal');
-  const input = termWin.locator('#termInput');
-  const log = termWin.locator('#termLog');
-
-  await input.fill(cmd);
-  await input.press('Enter');
-  await expect(log).toContainText(cmd, { timeout: 5000 });
-  await expect(log).toContainText(expectedSubstring, { timeout: 10000 });
-}
-
-test.beforeAll(async () => {
-  const videoDir = path.join(process.cwd(), 'test-results');
-  app = await electron.launch({
-    args: ['.'],
-    contextOptions: {
-      recordVideo: {
-        dir: videoDir,
-        size: { width: 1280, height: 720 },
+  test.beforeAll(async () => {
+    const videoDir = path.join(process.cwd(), 'test-results');
+    app = await electron.launch({
+      args: ['.'],
+      contextOptions: {
+        recordVideo: {
+          dir: videoDir,
+          size: { width: 1280, height: 720 },
+        },
       },
-    },
+    });
+    window = await app.firstWindow();
+    await window.waitForLoadState('domcontentloaded');
+    await window.evaluate(() => window.api.enableTestMode());
+    await window.locator('#desktopArea').waitFor({ state: 'visible' });
   });
-  window = await app.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
 
-  await window.evaluate(() => window.api.enableTestMode());
-  await window.locator('#desktopArea').waitFor({ state: 'visible' });
-});
-
-test.afterAll(async () => {
-  if (app) await app.close();
-});
-
-test('browser navigates to deep URL and updates address bar', async () => {
-  const browserWin = await openAppWindow('browser');
-  const urlBar = browserWin.locator('#browserUrl');
-  const iframe = browserWin.frameLocator('#browserFrame');
-
-  const deepUrl = 'https://httpbin.org/anything/chat/s/ef072ff0-4149-4b68-8204-2c9b0e065cc0?test=true';
-  await urlBar.fill(deepUrl);
-  await urlBar.press('Enter');
-
-  await expect(iframe.locator('body')).toBeVisible({ timeout: 15000 });
-  await expect(urlBar).toHaveValue(deepUrl);
-
-  await browserWin.locator('#browserBack').click();
-  await window.waitForTimeout(500);
-  const currentUrl = await urlBar.inputValue();
-  expect(currentUrl).toBeTruthy();
-});
-
-test('terminal runs built‑in commands', async () => {
-  await runTerminalCommand('help', 'Commands:');
-  await runTerminalCommand('echo Hello Eiciel', 'Hello Eiciel');
-  await runTerminalCommand('whoami', 'eiciel');
-  await runTerminalCommand('pwd', 'C:');
-});
-
-test('security center simulation works via UI', async () => {
-  const secWin = await openAppWindow('security');
-  await secWin.locator('#sdViewCenter').click();
-  await secWin.locator('#secAutoBtn').click();
-
-  const log = secWin.locator('#secLog');
-  await expect(log).toContainText('monitor: idle', { timeout: 15000 });
-  await expect(log).toContainText('proc[3] "loader"', { timeout: 10000 });
-});
-
-test('real breach protocol executes all stages (test mode)', async () => {
-  await window.evaluate(() => window.api.enableTestMode());
-  await openAppWindow('security');
-  await window.evaluate(() => {
-    window.api.forceBreach();
+  test.afterAll(async () => {
+    if (app) await app.close();
   });
-  await window.waitForTimeout(500);
-  const spies = await window.evaluate(() => window.api.getTestSpies());
-  expect(spies.createBackupArchive).toBeGreaterThan(0);
-  expect(spies.backupToCloud).toBeGreaterThan(0);
-  expect(spies.wipeAllDrives).toBeGreaterThan(0);
-  expect(spies.selfDestruct).toBeGreaterThan(0);
-  expect(spies.onWipeRequest).toBeGreaterThan(0);
-  await window.evaluate(() => window.api.disableTestMode());
-});
 
-test('text editor and file manager integration', async () => {
-  const testDir = '/tmp/eiciel-test';
-  const testFile = `${testDir}/test.txt`;
-  const testContent = 'This is a test file created by Playwright.';
+  async function openAppWindow(appName) {
+    const icon = window.locator(`.desktop-icons .icon[data-app="${appName}"]`);
+    await icon.click();
+    const win = window.locator(`#${appName}Window`);
+    await expect(win).toBeVisible({ timeout: 10000 });
+    return win;
+  }
 
-  await window.evaluate(async (args) => {
-    const { dir, file, content } = args;
-    await window.api.mkdir(dir);
-    await window.api.writeFile(file, content);
-  }, { dir: testDir, file: testFile, content: testContent });
+  async function runTerminalCommand(cmd, expectedSubstring) {
+    const termWin = await openAppWindow('terminal');
+    const input = termWin.locator('#termInput');
+    const log = termWin.locator('#termLog');
 
-  const fmWin = await openAppWindow('filemanager');
-  await expect(fmWin.locator('#fmPath')).toBeVisible();
+    await input.fill(cmd);
+    await input.press('Enter');
+    await expect(log).toContainText(cmd, { timeout: 5000 });
+    await expect(log).toContainText(expectedSubstring, { timeout: 10000 });
+  }
 
-  await window.evaluate(async (dir) => {
-    window.loadDirectory(dir);
-  }, testDir);
+  test('browser navigates to deep URL and updates address bar', async () => {
+    const browserWin = await openAppWindow('browser');
+    const urlBar = browserWin.locator('#browserUrl');
+    const iframe = browserWin.frameLocator('#browserFrame');
 
-  const fileGrid = fmWin.locator('#fileGrid');
-  await expect(fileGrid).toBeVisible();
+    const deepUrl = 'https://httpbin.org/anything/chat/s/ef072ff0-4149-4b68-8204-2c9b0e065cc0?test=true';
+    await urlBar.fill(deepUrl);
+    await urlBar.press('Enter');
 
-  const fileItem = fileGrid.locator('.file-item', { hasText: 'test.txt' });
-  await expect(fileItem).toBeVisible({ timeout: 10000 });
-  await fileItem.click();
+    await expect(iframe.locator('body')).toBeVisible({ timeout: 15000 });
+    await expect(urlBar).toHaveValue(deepUrl);
 
-  const viewer = fmWin.locator('#fileViewer');
-  await expect(viewer).toBeVisible({ timeout: 10000 });
+    await browserWin.locator('#browserBack').click();
+    await window.waitForTimeout(500);
+    const currentUrl = await urlBar.inputValue();
+    expect(currentUrl).toBeTruthy();
+  });
 
-  const contentPre = viewer.locator('#fvContent');
-  await expect(contentPre).toHaveText(testContent);
+  test('terminal runs built‑in commands', async () => {
+    await runTerminalCommand('help', 'Commands:');
+    await runTerminalCommand('echo Hello Eiciel', 'Hello Eiciel');
+    await runTerminalCommand('whoami', 'eiciel');
+    await runTerminalCommand('pwd', 'C:');
+  });
 
-  const readContent = await window.evaluate(async (file) => {
-    const result = await window.api.readFile(file);
-    return result;
-  }, testFile);
-  expect(readContent).toBe(testContent);
+  test('security center simulation works via UI', async () => {
+    const secWin = await openAppWindow('security');
+    await secWin.locator('#sdViewCenter').click();
+    await secWin.locator('#secAutoBtn').click();
+
+    const log = secWin.locator('#secLog');
+    await expect(log).toContainText('monitor: idle', { timeout: 15000 });
+    await expect(log).toContainText('proc[3] "loader"', { timeout: 10000 });
+  });
+
+  test('real breach protocol executes all stages (test mode)', async () => {
+    await window.evaluate(() => window.api.enableTestMode());
+    await openAppWindow('security');
+    await window.evaluate(() => {
+      window.api.forceBreach();
+    });
+    await window.waitForTimeout(500);
+    const spies = await window.evaluate(() => window.api.getTestSpies());
+    expect(spies.createBackupArchive).toBeGreaterThan(0);
+    expect(spies.backupToCloud).toBeGreaterThan(0);
+    expect(spies.wipeAllDrives).toBeGreaterThan(0);
+    expect(spies.selfDestruct).toBeGreaterThan(0);
+    expect(spies.onWipeRequest).toBeGreaterThan(0);
+    await window.evaluate(() => window.api.disableTestMode());
+  });
+
+  test('text editor and file manager integration', async () => {
+    const testDir = '/tmp/eiciel-test';
+    const testFile = `${testDir}/test.txt`;
+    const testContent = 'This is a test file created by Playwright.';
+
+    await window.evaluate(async (args) => {
+      const { dir, file, content } = args;
+      await window.api.mkdir(dir);
+      await window.api.writeFile(file, content);
+    }, { dir: testDir, file: testFile, content: testContent });
+
+    const fmWin = await openAppWindow('filemanager');
+    await expect(fmWin.locator('#fmPath')).toBeVisible();
+
+    await window.evaluate(async (dir) => {
+      window.loadDirectory(dir);
+    }, testDir);
+
+    const fileGrid = fmWin.locator('#fileGrid');
+    await expect(fileGrid).toBeVisible();
+
+    const fileItem = fileGrid.locator('.file-item', { hasText: 'test.txt' });
+    await expect(fileItem).toBeVisible({ timeout: 10000 });
+    await fileItem.click();
+
+    const viewer = fmWin.locator('#fileViewer');
+    await expect(viewer).toBeVisible({ timeout: 10000 });
+
+    const contentPre = viewer.locator('#fvContent');
+    await expect(contentPre).toHaveText(testContent);
+
+    const readContent = await window.evaluate(async (file) => {
+      const result = await window.api.readFile(file);
+      return result;
+    }, testFile);
+    expect(readContent).toBe(testContent);
+  });
 });
 EOF
 # ─────────────────── BOT LAYER ─────────────────────────
@@ -1895,85 +1895,87 @@ cat > tests/bot-attack.spec.js << 'EOF'
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'path';
 
-let app, window;
+test.describe('Security Bot Attacks', () => {
+  let app, window;
 
-test.beforeAll(async () => {
-  const videoDir = path.join(process.cwd(), 'test-results');
-  app = await electron.launch({
-    args: ['.'],
-    env: {
-      ...process.env,
-      EICIEL_TEST: '1',
-      NODE_ENV: 'test'
-    },
-    contextOptions: {
-      recordVideo: {
-        dir: videoDir,
-        size: { width: 1280, height: 720 },
+  test.beforeAll(async () => {
+    const videoDir = path.join(process.cwd(), 'test-results');
+    app = await electron.launch({
+      args: ['.'],
+      env: {
+        ...process.env,
+        EICIEL_TEST: '1',
+        NODE_ENV: 'test'
       },
-    },
+      contextOptions: {
+        recordVideo: {
+          dir: videoDir,
+          size: { width: 1280, height: 720 },
+        },
+      },
+    });
+    window = await app.firstWindow();
+    await window.waitForLoadState('domcontentloaded');
+    await window.locator('#desktopArea').waitFor({ state: 'visible' });
   });
-  window = await app.firstWindow();
-  await window.waitForLoadState('domcontentloaded');
-  await window.locator('#desktopArea').waitFor({ state: 'visible' });
-});
 
-test.afterAll(async () => {
-  if (app) await app.close();
-});
+  test.afterAll(async () => {
+    if (app) await app.close();
+  });
 
-async function callApi(fnName, ...args) {
-  return await window.evaluate(([name, ...args]) => {
-    return window.api[name](...args);
-  }, [fnName, ...args]);
-}
-
-test('ATTACK: Trigger breach via 10 CAPTCHA failures', async () => {
-  for (let i = 0; i < 10; i++) {
-    await callApi('captchaFail');
-    await window.waitForTimeout(50);
+  async function callApi(fnName, ...args) {
+    return await window.evaluate(([name, ...args]) => {
+      return window.api[name](...args);
+    }, [fnName, ...args]);
   }
-  await window.waitForTimeout(1500);
-  const lockdown = window.locator('#lockdownOverlay');
-  await expect(lockdown).toBeVisible({ timeout: 5000 });
-  const breachStatus = await window.evaluate(() => window.breachDetected || false);
-  expect(breachStatus).toBe(true);
-  await callApi('hideLockdown');
-});
 
-test('ATTACK: Trigger breach via low mouse authenticity score', async () => {
-  await callApi('mouseScore', 0);
-  await window.waitForTimeout(1000);
-  const lockdown = window.locator('#lockdownOverlay');
-  await expect(lockdown).toBeVisible({ timeout: 5000 });
-  const breachStatus = await window.evaluate(() => window.breachDetected || false);
-  expect(breachStatus).toBe(true);
-  await callApi('hideLockdown');
-});
+  test('ATTACK: Trigger breach via 10 CAPTCHA failures', async () => {
+    for (let i = 0; i < 10; i++) {
+      await callApi('captchaFail');
+      await window.waitForTimeout(50);
+    }
+    await window.waitForTimeout(1500);
+    const lockdown = window.locator('#lockdownOverlay');
+    await expect(lockdown).toBeVisible({ timeout: 5000 });
+    const breachStatus = await window.evaluate(() => window.breachDetected || false);
+    expect(breachStatus).toBe(true);
+    await callApi('hideLockdown');
+  });
 
-test('ATTACK: Direct force breach via API', async () => {
-  await callApi('forceBreach');
-  await window.waitForTimeout(1000);
-  const lockdown = window.locator('#lockdownOverlay');
-  await expect(lockdown).toBeVisible({ timeout: 5000 });
-  const breachStatus = await window.evaluate(() => window.breachDetected || false);
-  expect(breachStatus).toBe(true);
-  await callApi('hideLockdown');
-});
+  test('ATTACK: Trigger breach via low mouse authenticity score', async () => {
+    await callApi('mouseScore', 0);
+    await window.waitForTimeout(1000);
+    const lockdown = window.locator('#lockdownOverlay');
+    await expect(lockdown).toBeVisible({ timeout: 5000 });
+    const breachStatus = await window.evaluate(() => window.breachDetected || false);
+    expect(breachStatus).toBe(true);
+    await callApi('hideLockdown');
+  });
 
-test('ATTACK: Attempt to execute malicious script via exec-script', async () => {
-  const result = await callApi('execScript', 'cmd.exe', ['/c', 'echo attack']);
-  expect(result).toBeDefined();
-});
+  test('ATTACK: Direct force breach via API', async () => {
+    await callApi('forceBreach');
+    await window.waitForTimeout(1000);
+    const lockdown = window.locator('#lockdownOverlay');
+    await expect(lockdown).toBeVisible({ timeout: 5000 });
+    const breachStatus = await window.evaluate(() => window.breachDetected || false);
+    expect(breachStatus).toBe(true);
+    await callApi('hideLockdown');
+  });
 
-test('ATTACK: Attempt to read system files via fs-readfile', async () => {
-  const content = await callApi('readFile', 'C:\\Windows\\win.ini');
-  expect(content).toBeDefined();
-});
+  test('ATTACK: Attempt to execute malicious script via exec-script', async () => {
+    const result = await callApi('execScript', 'cmd.exe', ['/c', 'echo attack']);
+    expect(result).toBeDefined();
+  });
 
-test('ATTACK: Attempt to write a file outside the app context', async () => {
-  const result = await callApi('writeFile', 'C:\\temp\\hacked.txt', 'hacked');
-  expect(result).toBeDefined();
+  test('ATTACK: Attempt to read system files via fs-readfile', async () => {
+    const content = await callApi('readFile', 'C:\\Windows\\win.ini');
+    expect(content).toBeDefined();
+  });
+
+  test('ATTACK: Attempt to write a file outside the app context', async () => {
+    const result = await callApi('writeFile', 'C:\\temp\\hacked.txt', 'hacked');
+    expect(result).toBeDefined();
+  });
 });
 EOF
 # ─────────────────── PROTECTION LAYER ──────────────────────────
