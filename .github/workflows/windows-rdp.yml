@@ -69,59 +69,13 @@ jobs:
           }
           Write-Host "✅ VNC server running with NO password"
 
-      - name: Setup noVNC web client
-        run: |
-          python -m pip install websockify
-          if (-not (Test-Path "C:\noVNC")) {
-            git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
-          }
-          # Redirect root to vnc_lite.html
-          echo '<meta http-equiv="refresh" content="0;url=vnc_lite.html">' > C:\noVNC\index.html
-
-          $conn = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
-          if ($conn) { Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue }
-          Start-Sleep -Seconds 2
-
-          $logOut = "$env:TEMP\websockify_out.log"
-          $logErr = "$env:TEMP\websockify_err.log"
-          Start-Process -FilePath "python" -ArgumentList "-m websockify --web C:\noVNC --verbose 6080 localhost:5900" -RedirectStandardOutput $logOut -RedirectStandardError $logErr -WindowStyle Hidden -PassThru
-
-          $maxAttempts = 15
-          $attempt = 0
-          while ($attempt -lt $maxAttempts) {
-            $conn = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
-            if ($conn -and $conn.State -eq 'Listen') { break }
-            Start-Sleep -Seconds 2
-            $attempt++
-            Write-Host "Waiting for websockify... $($attempt+1)/$maxAttempts"
-          }
-          if ($attempt -ge $maxAttempts) {
-            Write-Host "❌ websockify failed to bind port 6080"
-            Write-Host "stdout log:"
-            Get-Content $logOut
-            Write-Host "stderr log:"
-            Get-Content $logErr
-            exit 1
-          }
-
-          try {
-            $response = Invoke-WebRequest -Uri "http://localhost:6080" -UseBasicParsing -TimeoutSec 3
-            Write-Host "✅ websockify responded with status $($response.StatusCode)"
-          } catch {
-            Write-Host "⚠️ websockify HTTP request failed, but port is open – continuing."
-          }
-
-          Write-Host "✅ noVNC ready on http://localhost:6080"
-
-      - name: Expose VNC via Cloudflare (authenticated)
+      - name: Expose VNC via Cloudflare (TCP tunnel)
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          # Use the API token to create a quick tunnel with your account
-          # This will produce a stable .trycloudflare.com URL with WebSocket support
-          $outFile = "$env:TEMP\cloudflared_out.log"
-          $errFile = "$env:TEMP\cloudflared_err.log"
-          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --protocol http2 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          $outFile = "$env:TEMP\cloudflared_tcp.log"
+          $errFile = "$env:TEMP\cloudflared_tcp_err.log"
+          Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url tcp://localhost:5900 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
 
           $maxAttempts = 40
           $attempt = 0
@@ -152,11 +106,14 @@ jobs:
             exit 1
           }
 
+          $hostname = $tunnelUrl -replace 'https://',''
           Write-Host "============================================"
-          Write-Host "  🖥️  VNC READY – Eiciel OS"
+          Write-Host "  🖥️  VNC READY (TCP) – Eiciel OS"
           Write-Host "============================================"
-          Write-Host "  Open this URL in your browser: $tunnelUrl"
-          Write-Host "  VNC Password: (leave blank)"
+          Write-Host "  Connect using any VNC client:"
+          Write-Host "  Host: $hostname"
+          Write-Host "  Port: 5900"
+          Write-Host "  Password: (leave blank)"
           Write-Host "============================================"
 
           Wait-Process -Name cloudflared
