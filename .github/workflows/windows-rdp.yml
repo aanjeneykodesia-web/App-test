@@ -50,36 +50,30 @@ jobs:
           echo "VNC_PATH=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "✅ UltraVNC installed at $installDir"
 
-      - name: Configure VNC with fixed password (1234)
+      - name: Configure VNC password and start server
         run: |
-          # Use vncpasswd to generate the encrypted password file
-          $password = "1234"
-          $passFile = "$env:TEMP\vncpass.bin"
-          # vncpasswd expects input via stdin; we pipe the password twice
-          echo $password | & "$env:VNC_PATH\vncpasswd.exe" -f > $passFile
-
-          # Read the binary data and store it in the registry
-          $passBytes = Get-Content $passFile -Raw -Encoding Byte
-          New-Item -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Force | Out-Null
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "Password" -Value $passBytes -Type Binary
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "AuthRequired" -Value 1 -Type DWord
-          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "UseRegistry" -Value 1 -Type DWord
-          Write-Host "✅ VNC password set to '1234'"
-
-      - name: Start VNC server (restart to apply changes)
-        run: |
+          # Kill any existing VNC process
           Get-Process -Name winvnc -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
+
+          # Set password via winvnc -install (writes to registry)
+          & "$env:VNC_PATH\winvnc.exe" -install -password 1234
+
+          # Start the VNC server
           Start-Process -FilePath "$env:VNC_PATH\winvnc.exe" -ArgumentList "-run" -WindowStyle Hidden
           Start-Sleep -Seconds 5
+
+          # Verify it's listening
           $listening = netstat -an | Select-String ":5900"
           if ($listening) {
             Write-Host "✅ VNC server listening on port 5900"
             Write-Host $listening
           } else {
-            Write-Host "❌ VNC server is not listening on port 5900"
+            Write-Host "❌ VNC server not listening"
             exit 1
           }
+
+          Write-Host "✅ VNC password set to '1234'"
 
       - name: Expose VNC via Cloudflare TCP tunnel
         run: |
@@ -131,7 +125,7 @@ jobs:
           Write-Host "  Tunnel is active – keep this workflow running."
           Write-Host "  Cancel the run when you're done."
 
-          # Keep alive
+          # Keep alive – check if cloudflared dies
           while ($true) {
             Start-Sleep -Seconds 30
             if ($proc.HasExited) {
