@@ -1,41 +1,72 @@
-name: Build & Test Eiciel OS (Playwright)
+name: Build & Test
 
 on:
-  workflow_dispatch:
-
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build-and-test:
+  build:
     runs-on: windows-latest
-    timeout-minutes: 30
-
     steps:
-      - name: Checkout your app source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
         with:
-          path: app
-
-      - name: Build Eiciel OS (protected)
-        run: |
-          cd app
-          bash build-and-test.sh
+          node-version: 18
+      - name: Build
+        run: bash build-and-test.sh
         shell: bash
+      - name: Upload artifact (.exe)
+        uses: actions/upload-artifact@v4
+        with:
+          name: EicielOS-win32-x64
+          path: eiciel-electron/EicielOS-win32-x64/
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y xvfb python3 python3-pip default-jdk ffmpeg
+
+      - name: Run script (skip build)
+        run: |
+          chmod +x build-and-test.sh
+          ./build-and-test.sh
         env:
-          CI: ""
+          CI: true
 
       - name: Install Playwright browsers
         run: |
-          cd app
+          cd eiciel-electron
           npx playwright install chromium
 
-      - name: Run functional Playwright tests
+      # ─── Functional tests ──────────────────────────────────────
+      - name: Run functional tests
         run: |
-          cd app
-          npx playwright test
+          cd eiciel-electron
+          xvfb-run --auto-servernum -- npm test
 
+      # ─── Security bot attacks ──────────────────────────────────
       - name: Run security bot attacks
         run: |
-          cd app
-          npx playwright test bot-attack.spec.js
+          cd eiciel-electron
+          xvfb-run --auto-servernum -- npm run test:attack
+
+      - name: Convert WebM to MP4
+        run: |
+          cd eiciel-electron
+          find test-results -name "*.webm" -exec sh -c 'ffmpeg -i "$0" -c:v libx264 -preset fast -crf 23 -y "${0%.webm}.mp4" && rm "$0"' {} \;
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-test-results
+          path: eiciel-electron/test-results/
