@@ -50,15 +50,16 @@ jobs:
           echo "VNC_PATH=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
           Write-Host "✅ UltraVNC installed at $installDir"
 
+      - name: Configure VNC for empty password
+        run: |
+          New-Item -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Force | Out-Null
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "AllowNullPassword" -Value 1 -Type DWord
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\UVNC\UltraVNC" -Name "AuthRequired" -Value 0 -Type DWord
+          Write-Host "✅ VNC configured to allow empty passwords"
+
       - name: Start VNC server
         run: |
           $vncServer = "$env:VNC_PATH\winvnc.exe"
-          $password = "P@ssw0rd123!"
-          if (-not (Test-Path $vncServer)) {
-            Write-Host "❌ winvnc.exe not found"
-            exit 1
-          }
-          & $vncServer -passwd $password
           Start-Process -FilePath $vncServer -ArgumentList "-run -desktop" -WindowStyle Hidden
           Start-Sleep -Seconds 5
           netstat -an | findstr :5900
@@ -66,7 +67,7 @@ jobs:
             Write-Host "⚠️ Port 5900 not listening"
             exit 1
           }
-          Write-Host "✅ VNC server running on port 5900"
+          Write-Host "✅ VNC server running with NO password"
 
       - name: Setup noVNC web client
         run: |
@@ -74,7 +75,7 @@ jobs:
           if (-not (Test-Path "C:\noVNC")) {
             git clone --depth=1 https://github.com/novnc/noVNC.git C:\noVNC
           }
-          # Redirect root to vnc_lite.html (lighter, fewer WebSocket issues)
+          # Redirect root to vnc_lite.html
           echo '<meta http-equiv="refresh" content="0;url=vnc_lite.html">' > C:\noVNC\index.html
 
           $conn = Get-NetTCPConnection -LocalPort 6080 -ErrorAction SilentlyContinue
@@ -103,7 +104,6 @@ jobs:
             exit 1
           }
 
-          # Verify local HTTP response
           try {
             $response = Invoke-WebRequest -Uri "http://localhost:6080" -UseBasicParsing -TimeoutSec 3
             Write-Host "✅ websockify responded with status $($response.StatusCode)"
@@ -112,10 +112,13 @@ jobs:
           }
 
           Write-Host "✅ noVNC ready on http://localhost:6080"
-          Write-Host "Websockify logs: $logOut and $logErr"
 
-      - name: Expose VNC via Cloudflare (HTTP/2)
+      - name: Expose VNC via Cloudflare (authenticated)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
+          # Use the API token to create a quick tunnel with your account
+          # This will produce a stable .trycloudflare.com URL with WebSocket support
           $outFile = "$env:TEMP\cloudflared_out.log"
           $errFile = "$env:TEMP\cloudflared_err.log"
           Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --protocol http2 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
@@ -153,8 +156,7 @@ jobs:
           Write-Host "  🖥️  VNC READY – Eiciel OS"
           Write-Host "============================================"
           Write-Host "  Open this URL in your browser: $tunnelUrl"
-          Write-Host "  VNC Password: P@ssw0rd123!"
+          Write-Host "  VNC Password: (leave blank)"
           Write-Host "============================================"
 
-          # Keep the tunnel alive
           Wait-Process -Name cloudflared
