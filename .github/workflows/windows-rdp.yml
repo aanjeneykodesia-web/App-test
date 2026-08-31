@@ -28,42 +28,44 @@ jobs:
       - name: Setup Cloudflared
         uses: AnimMouse/setup-cloudflared@v2
 
-      - name: Install UltraVNC
+      - name: Install TightVNC
         run: |
-          choco install ultravnc -y --limit-output
-          Start-Sleep -Seconds 10
-          $installDir = "C:\Program Files\uvnc bvba\UltraVNC"
+          choco install tightvnc -y --limit-output
+          # Find installation path
+          $installDir = "C:\Program Files\TightVNC"
           if (-not (Test-Path $installDir)) {
             $searchPaths = @(
-              "C:\Program Files\UltraVNC",
-              "C:\Program Files (x86)\UltraVNC",
-              "C:\Program Files\uvnc bvba\UltraVNC"
+              "C:\Program Files\TightVNC",
+              "C:\Program Files (x86)\TightVNC"
             )
             foreach ($p in $searchPaths) {
               if (Test-Path $p) { $installDir = $p; break }
             }
           }
           if (-not (Test-Path $installDir)) {
-            Write-Host "❌ UltraVNC not found"
+            Write-Host "❌ TightVNC not found"
             exit 1
           }
           echo "VNC_PATH=$installDir" | Out-File -FilePath $env:GITHUB_ENV -Append
-          Write-Host "✅ UltraVNC installed at $installDir"
+          Write-Host "✅ TightVNC installed at $installDir"
 
-      - name: Configure VNC password and start server
+      - name: Configure TightVNC with password 1234
         run: |
-          # Kill any existing VNC process
-          Get-Process -Name winvnc -ErrorAction SilentlyContinue | Stop-Process -Force
+          # Create a password file (TightVNC uses a simple text file with the password)
+          $password = "1234"
+          $passFile = "$env:TEMP\vncpass.txt"
+          Set-Content -Path $passFile -Value $password -NoNewline
+          Write-Host "✅ Password file created at $passFile"
+
+          # Kill any existing TightVNC server
+          Get-Process -Name tvnserver -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
 
-          # Set password via winvnc -install (writes to registry)
-          & "$env:VNC_PATH\winvnc.exe" -install -password 1234
-
-          # Start the VNC server
-          Start-Process -FilePath "$env:VNC_PATH\winvnc.exe" -ArgumentList "-run" -WindowStyle Hidden
+          # Start TightVNC server with explicit binding to all interfaces, port 5900, password file
+          Start-Process -FilePath "$env:VNC_PATH\tvnserver.exe" -ArgumentList "-bind -port 5900 -passfile $passFile -service" -WindowStyle Hidden
           Start-Sleep -Seconds 5
 
-          # Verify it's listening
+          # Verify listening
           $listening = netstat -an | Select-String ":5900"
           if ($listening) {
             Write-Host "✅ VNC server listening on port 5900"
@@ -72,8 +74,6 @@ jobs:
             Write-Host "❌ VNC server not listening"
             exit 1
           }
-
-          Write-Host "✅ VNC password set to '1234'"
 
       - name: Expose VNC via Cloudflare TCP tunnel
         run: |
