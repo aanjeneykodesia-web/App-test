@@ -70,37 +70,45 @@ jobs:
             exit 1
           }
 
-      # --- 2. Clone noVNC and start the proxy ---
-      - name: Clone and setup noVNC
+      # --- 2. Clone noVNC and install websockify ---
+      - name: Clone noVNC and install dependencies
         run: |
           git clone https://github.com/novnc/noVNC.git
-          cd noVNC
-          # Install Python and websockify (dependency for the proxy)
           choco install python -y --limit-output
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           python -m pip install --upgrade pip
           pip install websockify
-          Write-Host "✅ noVNC cloned and dependencies installed"
+          Write-Host "✅ noVNC cloned and websockify installed"
 
-      - name: Start noVNC proxy
+      - name: Start websockify (serving noVNC web interface)
         run: |
-          # Kill any existing processes that might use the ports
+          # Kill any existing processes that may use ports 6080 or 5900
           Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force
-          Get-Process -Name node -ErrorAction SilentlyContinue | Stop-Process -Force
+          Get-Process -Name websockify -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
 
+          # Change to the noVNC directory
           cd noVNC
-          # The novnc_proxy script automatically downloads and starts websockify,
-          # serving the noVNC client on port 6080 and connecting to the VNC server on port 5900[reference:1]
-          Start-Process -FilePath "python" -ArgumentList "utils/novnc_proxy --vnc localhost:5900 --listen 6080" -WindowStyle Hidden -PassThru
 
+          # Start websockify in the background with output logging
+          $logFile = "$env:TEMP\websockify.log"
+          $errFile = "$env:TEMP\websockify.err"
+          $proc = Start-Process -FilePath "websockify" -ArgumentList "--web . 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          Write-Host "websockify PID: $($proc.Id)"
+
+          # Wait a few seconds and check if port 6080 is listening
           Start-Sleep -Seconds 10
-          netstat -an | findstr :6080
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host "❌ noVNC proxy not listening on 6080"
+          $listening = netstat -an | Select-String ":6080"
+          if ($listening) {
+            Write-Host "✅ websockify is listening on port 6080"
+          } else {
+            Write-Host "❌ websockify not listening on 6080"
+            Write-Host "--- websockify stdout ---"
+            Get-Content $logFile -ErrorAction SilentlyContinue
+            Write-Host "--- websockify stderr ---"
+            Get-Content $errFile -ErrorAction SilentlyContinue
             exit 1
           }
-          Write-Host "✅ noVNC proxy running on port 6080"
 
       # --- 3. Expose noVNC via Cloudflare HTTP tunnel ---
       - name: Expose noVNC via Cloudflare HTTP tunnel
