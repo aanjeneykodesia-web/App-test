@@ -1891,7 +1891,8 @@ test.describe('Eiciel OS Functional Tests', () => {
   });
 });
 EOF
-# ─────────────────── BOT LAYER ─────────────────────────
+
+# ─── tests/bot-attack.spec.js ──────────────────────────────────
 cat > tests/bot-attack.spec.js << 'EOF'
 import { test, expect, _electron as electron } from '@playwright/test';
 import path from 'path';
@@ -1979,6 +1980,7 @@ test.describe('Security Bot Attacks', () => {
   });
 });
 EOF
+
 # ─────────────────── PROTECTION LAYER ──────────────────────────
 
 echo "🔒 Installing protection tools..."
@@ -2118,9 +2120,6 @@ rm encrypt.js
 mkdir -p dist
 cp source.enc dist/
 # Also keep it in the root so it's included in the asar
-
-# ─── Update package.json main to loader.js ────────────────────
-# (Already done in the package.json we wrote)
 
 # ─── Install dependencies (including dev) ──────────────────────
 echo "📦 Installing dependencies..."
