@@ -25,9 +25,7 @@ jobs:
         env:
           CI: ""
 
-      - name: Setup Cloudflared
-        uses: AnimMouse/setup-cloudflared@v2
-
+      # ---------- TightVNC ----------
       - name: Install TightVNC
         run: |
           choco install tightvnc -y --limit-output
@@ -69,47 +67,49 @@ jobs:
             exit 1
           }
 
-      - name: Clone noVNC and install websockify (using specific Python)
+      # ---------- Python & websockify ----------
+      - name: Install Python and websockify
         run: |
-          git clone https://github.com/novnc/noVNC.git
           choco install python -y --limit-output
-
-          # Find the newly installed Python (expected location)
-          $pythonExe = "C:\hostedtoolcache\windows\Python\3.14.7\x64\python.exe"
-          if (-not (Test-Path $pythonExe)) {
-            Write-Host "❌ Python 3.14.7 not found at $pythonExe"
+          $possiblePaths = @(
+            "C:\hostedtoolcache\windows\Python\3.14.7\x64\python.exe",
+            "C:\hostedtoolcache\windows\Python\3.13.*\x64\python.exe",
+            "C:\hostedtoolcache\windows\Python\3.12.*\x64\python.exe",
+            "C:\Python314\python.exe",
+            "C:\Python313\python.exe",
+            "C:\Python312\python.exe"
+          )
+          $pythonExe = $null
+          foreach ($p in $possiblePaths) {
+            if (Test-Path $p) { $pythonExe = $p; break }
+          }
+          if (-not $pythonExe) {
+            $pythonExe = (Get-Command python -ErrorAction SilentlyContinue).Source
+          }
+          if (-not $pythonExe -or -not (Test-Path $pythonExe)) {
+            Write-Host "❌ Python not found"
             exit 1
           }
           Write-Host "Using Python: $pythonExe"
 
-          # Upgrade pip and install websockify with this Python
           & $pythonExe -m pip install --upgrade pip
-          & $pythonExe -m pip install --force-reinstall websockify
-
-          Write-Host "Verifying websockify installation..."
-          & $pythonExe -c "import websockify" 
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host "✅ websockify installed and verified"
-          } else {
-            Write-Host "❌ websockify module not found."
-            & $pythonExe -m pip list
+          & $pythonExe -m pip install websockify
+          & $pythonExe -c "import websockify"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "❌ websockify installation failed"
             exit 1
           }
-
-          # Store the Python path for later steps
           echo "PYTHON_EXE=$pythonExe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "✅ websockify installed"
 
-      - name: Start websockify (serving noVNC web interface)
+      - name: Start websockify (WebSocket proxy)
         run: |
           Get-Process -Name python -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
 
-          cd noVNC
           $logFile = "$env:TEMP\websockify.log"
           $errFile = "$env:TEMP\websockify.err"
-
-          # Use the specific Python we installed
-          $proc = Start-Process -FilePath "$env:PYTHON_EXE" -ArgumentList "-m websockify --web . 6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
+          $proc = Start-Process -FilePath "$env:PYTHON_EXE" -ArgumentList "-m websockify 0.0.0.0:6080 localhost:5900" -RedirectStandardOutput $logFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
           Write-Host "websockify PID: $($proc.Id)"
 
           Start-Sleep -Seconds 10
@@ -117,74 +117,77 @@ jobs:
           if ($listening) {
             Write-Host "✅ websockify is listening on port 6080"
           } else {
-            Write-Host "❌ websockify not listening on 6080"
-            Write-Host "--- websockify stdout ---"
+            Write-Host "❌ websockify not listening"
+            Write-Host "--- stdout ---"
             Get-Content $logFile -ErrorAction SilentlyContinue
-            Write-Host "--- websockify stderr ---"
+            Write-Host "--- stderr ---"
             Get-Content $errFile -ErrorAction SilentlyContinue
             exit 1
           }
 
-      - name: Expose noVNC via Cloudflare HTTP tunnel
-        run: |
-          $outFile = "$env:TEMP\cf_http_out.log"
-          $errFile = "$env:TEMP\cf_http_err.log"
-          $proc = Start-Process -FilePath "cloudflared" -ArgumentList "tunnel --url http://localhost:6080 --loglevel debug" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
-          Write-Host "Cloudflared PID: $($proc.Id)"
+          if ($proc.HasExited) {
+            Write-Host "❌ websockify died unexpectedly"
+            Write-Host "--- stdout ---"
+            Get-Content $logFile -ErrorAction SilentlyContinue
+            Write-Host "--- stderr ---"
+            Get-Content $errFile -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Write-Host "✅ websockify is stable"
 
-          $timeout = 90
+      # ---------- ngrok ----------
+      - name: Install ngrok
+        run: |
+          choco install ngrok -y --limit-output
+          ngrok authtoken ${{ secrets.NGROK_TOKEN }}
+          Write-Host "✅ ngrok installed and authenticated"
+
+      - name: Expose WebSocket proxy via ngrok
+        run: |
+          $logFile = "$env:TEMP\ngrok.log"
+          $proc = Start-Process -FilePath "ngrok" -ArgumentList "http 6080 --log=stdout --log-level=debug" -RedirectStandardOutput $logFile -RedirectStandardError $logFile -WindowStyle Hidden -PassThru
+          Write-Host "ngrok PID: $($proc.Id)"
+
+          $timeout = 60
           $sw = [System.Diagnostics.Stopwatch]::StartNew()
           $tunnelUrl = $null
-
           while ($sw.Elapsed.TotalSeconds -lt $timeout) {
-            if (Test-Path $outFile) {
-              $lines = Get-Content $outFile -ErrorAction SilentlyContinue
-              foreach ($line in $lines) {
-                if ($line -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
-                  $tunnelUrl = $line -replace '.*(https://[a-z0-9-]+\.trycloudflare\.com).*', '$1'
-                  break
-                }
+            if (Test-Path $logFile) {
+              $content = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+              if ($content -match 'https://([a-z0-9-]+\.ngrok\.io)') {
+                $tunnelUrl = "https://$($matches[1])"
+                break
               }
             }
-            if ($tunnelUrl) { break }
-
-            if (Test-Path $errFile) {
-              $errLines = Get-Content $errFile -ErrorAction SilentlyContinue
-              foreach ($line in $errLines) {
-                if ($line -match 'https://([a-z0-9-]+\.trycloudflare\.com)') {
-                  $tunnelUrl = $line -replace '.*(https://[a-z0-9-]+\.trycloudflare\.com).*', '$1'
-                  break
-                }
-              }
-            }
-            if ($tunnelUrl) { break }
-
             Start-Sleep -Seconds 1
           }
 
           if (-not $tunnelUrl) {
-            Write-Host "❌ No tunnel URL found."
-            Write-Host "stdout tail:"
-            Get-Content $outFile -Tail 20 -ErrorAction SilentlyContinue
-            Write-Host "stderr tail:"
-            Get-Content $errFile -Tail 20 -ErrorAction SilentlyContinue
+            Write-Host "❌ No ngrok URL found."
+            Write-Host "Log tail:"
+            Get-Content $logFile -Tail 30 -ErrorAction SilentlyContinue
             Stop-Process -Id $proc.Id -Force
             exit 1
           }
 
           Write-Host "============================================"
-          Write-Host "  🌐 noVNC READY – Eiciel OS"
+          Write-Host "  🌐 WebSocket Proxy READY – Eiciel OS"
           Write-Host "============================================"
-          Write-Host "  Open this URL in your browser:"
-          Write-Host "  $tunnelUrl"
-          Write-Host "  Password: 1234"
+          Write-Host "  Your VNC WebSocket endpoint:"
+          Write-Host "  $tunnelUrl/websockify"
+          Write-Host ""
+          Write-Host "  Configure your noVNC client (on Vercel) with:"
+          Write-Host "  - Host: $($tunnelUrl -replace 'https://','')"
+          Write-Host "  - Port: 443"
+          Write-Host "  - Path: /websockify"
+          Write-Host "  - Password: 1234"
           Write-Host "============================================"
-          Write-Host "  The tunnel stays active until you cancel the workflow."
+          Write-Host "  Tunnel stays active until you cancel the workflow."
 
           while ($true) {
             Start-Sleep -Seconds 30
             if ($proc.HasExited) {
-              Write-Host "❌ Cloudflared exited. Tunnel down."
+              Write-Host "❌ ngrok exited. Tunnel down."
               exit 1
             }
           }
