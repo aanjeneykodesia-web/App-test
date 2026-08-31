@@ -1890,7 +1890,92 @@ test('text editor and file manager integration', async () => {
   expect(readContent).toBe(testContent);
 });
 EOF
+# ─────────────────── BOT LAYER ─────────────────────────
+cat > tests/bot-attack.spec.js << 'EOF'
+import { test, expect, _electron as electron } from '@playwright/test';
+import path from 'path';
 
+let app, window;
+
+test.beforeAll(async () => {
+  const videoDir = path.join(process.cwd(), 'test-results');
+  app = await electron.launch({
+    args: ['.'],
+    env: {
+      ...process.env,
+      EICIEL_TEST: '1',
+      NODE_ENV: 'test'
+    },
+    contextOptions: {
+      recordVideo: {
+        dir: videoDir,
+        size: { width: 1280, height: 720 },
+      },
+    },
+  });
+  window = await app.firstWindow();
+  await window.waitForLoadState('domcontentloaded');
+  await window.locator('#desktopArea').waitFor({ state: 'visible' });
+});
+
+test.afterAll(async () => {
+  if (app) await app.close();
+});
+
+async function callApi(fnName, ...args) {
+  return await window.evaluate(([name, ...args]) => {
+    return window.api[name](...args);
+  }, [fnName, ...args]);
+}
+
+test('ATTACK: Trigger breach via 10 CAPTCHA failures', async () => {
+  for (let i = 0; i < 10; i++) {
+    await callApi('captchaFail');
+    await window.waitForTimeout(50);
+  }
+  await window.waitForTimeout(1500);
+  const lockdown = window.locator('#lockdownOverlay');
+  await expect(lockdown).toBeVisible({ timeout: 5000 });
+  const breachStatus = await window.evaluate(() => window.breachDetected || false);
+  expect(breachStatus).toBe(true);
+  await callApi('hideLockdown');
+});
+
+test('ATTACK: Trigger breach via low mouse authenticity score', async () => {
+  await callApi('mouseScore', 0);
+  await window.waitForTimeout(1000);
+  const lockdown = window.locator('#lockdownOverlay');
+  await expect(lockdown).toBeVisible({ timeout: 5000 });
+  const breachStatus = await window.evaluate(() => window.breachDetected || false);
+  expect(breachStatus).toBe(true);
+  await callApi('hideLockdown');
+});
+
+test('ATTACK: Direct force breach via API', async () => {
+  await callApi('forceBreach');
+  await window.waitForTimeout(1000);
+  const lockdown = window.locator('#lockdownOverlay');
+  await expect(lockdown).toBeVisible({ timeout: 5000 });
+  const breachStatus = await window.evaluate(() => window.breachDetected || false);
+  expect(breachStatus).toBe(true);
+  await callApi('hideLockdown');
+});
+
+test('ATTACK: Attempt to execute malicious script via exec-script', async () => {
+  const result = await callApi('execScript', 'cmd.exe', ['/c', 'echo attack']);
+  expect(result).toBeDefined();
+});
+
+test('ATTACK: Attempt to read system files via fs-readfile', async () => {
+  const content = await callApi('readFile', 'C:\\Windows\\win.ini');
+  expect(content).toBeDefined();
+});
+
+test('ATTACK: Attempt to write a file outside the app context', async () => {
+  const result = await callApi('writeFile', 'C:\\temp\\hacked.txt', 'hacked');
+  expect(result).toBeDefined();
+});
+EOF
 # ─────────────────── PROTECTION LAYER ──────────────────────────
 
 echo "🔒 Installing protection tools..."
