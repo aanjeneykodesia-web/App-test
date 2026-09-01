@@ -1,16 +1,27 @@
-name: Test
-on: [push, pull_request]
+# .github/workflows/build-and-release.yml
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'   # triggers when you push a tag like v1.0.0
+
 jobs:
-  test:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v3
       - uses: actions/setup-node@v3
         with:
           node-version: '18'
-      - name: Build and test
+      - name: Build protected app
         run: |
           chmod +x build-protected.sh
           ./build-protected.sh
-          cd eiciel-electron
-          npx playwright test
+        shell: bash
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe
+            D:/data/EicielOS/EicielOS-win32-x64/**/*
