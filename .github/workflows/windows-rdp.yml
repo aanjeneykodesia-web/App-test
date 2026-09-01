@@ -1,105 +1,16 @@
-name: RDP - Kiosk Mode (Eiciel OS)
-
-on:
-  workflow_dispatch:
-
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
-
+name: Test
+on: [push, pull_request]
 jobs:
-  rdp-session:
-    runs-on: windows-latest
-    timeout-minutes: 9999
-
+  test:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout your app source
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
         with:
-          path: app
-
-      - name: Build Eiciel OS
+          node-version: '18'
+      - name: Build and test
         run: |
-          cd app
-          bash build-and-test.sh
-        shell: bash
-        env:
-          CI: ""
-
-      # ---------- Enable RDP ----------
-      - name: Enable Remote Desktop
-        run: |
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 1 -Force
-          netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
-          Write-Host "✅ Remote Desktop enabled"
-
-      # ---------- Set password and ensure admin membership ----------
-      - name: Set password for runneradmin
-        run: |
-          $password = "Password123!"
-          # Set the password (user exists by default)
-          net user runneradmin $password
-          # Add to Administrators group if not already a member
-          $members = net localgroup Administrators | Select-String "runneradmin"
-          if (-not $members) {
-            net localgroup Administrators runneradmin /add
-          }
-          Write-Host "✅ Password for runneradmin set to: $password"
-
-      # ---------- Install ngrok ----------
-      - name: Install ngrok
-        run: |
-          choco install ngrok -y --limit-output
-          Write-Host "✅ ngrok installed"
-
-      # ---------- Expose RDP via ngrok TCP tunnel ----------
-      - name: Expose RDP via ngrok TCP tunnel
-        run: |
-          $outFile = "$env:TEMP\ngrok_out.log"
-          $errFile = "$env:TEMP\ngrok_err.log"
-          $proc = Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389 --log=stdout --log-level=debug --authtoken=${{ secrets.NGROK_TOKEN }}" -RedirectStandardOutput $outFile -RedirectStandardError $errFile -WindowStyle Hidden -PassThru
-          Write-Host "ngrok PID: $($proc.Id)"
-
-          $timeout = 60
-          $sw = [System.Diagnostics.Stopwatch]::StartNew()
-          $tunnelUrl = $null
-          while ($sw.Elapsed.TotalSeconds -lt $timeout) {
-            if (Test-Path $outFile) {
-              $content = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
-              if ($content -match 'tcp://([0-9a-z.-]+):(\d+)') {
-                $tunnelUrl = "$($matches[1]):$($matches[2])"
-                break
-              }
-            }
-            Start-Sleep -Seconds 1
-          }
-
-          if (-not $tunnelUrl) {
-            Write-Host "❌ No ngrok TCP URL found."
-            Write-Host "stdout tail:"
-            Get-Content $outFile -Tail 30 -ErrorAction SilentlyContinue
-            Write-Host "stderr tail:"
-            Get-Content $errFile -Tail 30 -ErrorAction SilentlyContinue
-            if (-not $proc.HasExited) {
-              Stop-Process -Id $proc.Id -Force
-            }
-            exit 1
-          }
-
-          Write-Host "============================================"
-          Write-Host "  🖥️  RDP READY – Eiciel OS"
-          Write-Host "============================================"
-          Write-Host "  Remote Desktop Connection:"
-          Write-Host "  Computer: $tunnelUrl"
-          Write-Host "  Username: runneradmin"
-          Write-Host "  Password: Password123!"
-          Write-Host "============================================"
-          Write-Host "  Tunnel stays active until you cancel the workflow."
-
-          while ($true) {
-            Start-Sleep -Seconds 30
-            if ($proc.HasExited) {
-              Write-Host "❌ ngrok exited. Tunnel down."
-              exit 1
-            }
-          }
+          chmod +x build-protected.sh
+          ./build-protected.sh
+          cd eiciel-electron
+          npx playwright test
