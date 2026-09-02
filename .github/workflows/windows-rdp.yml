@@ -12,7 +12,7 @@ jobs:
       - name: Checkout Eiciel OS
         uses: actions/checkout@v4
         with:
-          repository: aanjeneykodesia-web/App-test   # <-- replace with your repo
+          repository: aanjeneykodesia-web/App-test
           path: app
           token: ${{ secrets.PAT_TOKEN || github.token }}
 
@@ -28,6 +28,15 @@ jobs:
           bash build-protected.sh
         shell: bash
 
+      # ─── Copy your custom security test file ──────────────────
+      - name: Copy Security Test File
+        run: |
+          cd ./app
+          # Assuming your security test file is at the repo root
+          # If you have a separate security-test.spec.js, copy it
+          cp security-attacks.spec.js eiciel-electron/tests/ 2>/dev/null || echo "No custom test file, using default."
+        shell: bash
+
       - name: Install Playwright
         run: |
           cd ./app/eiciel-electron
@@ -35,14 +44,12 @@ jobs:
           npx playwright install chromium
         shell: bash
 
-      # ─── Debug: list files to confirm test file exists ──
-      - name: List files
+      - name: List test files
         run: |
           cd ./app/eiciel-electron
-          dir
+          dir tests
         shell: bash
 
-      # ─── Run the security tests ────────────────────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
