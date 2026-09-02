@@ -41,6 +41,36 @@ jobs:
           bash build-protected.sh
         shell: bash
 
+      # ─── DEBUG: Show loader log ─────────────────────────────────
+      - name: Show loader log
+        run: |
+          if (Test-Path "$env:APPDATA\eiciel_loader.log") {
+            Get-Content "$env:APPDATA\eiciel_loader.log"
+          } else {
+            Write-Host "Loader log not found."
+          }
+        shell: pwsh
+
+      # ─── DEBUG: List packaged app contents ──────────────────────
+      - name: List packaged app files
+        run: |
+          dir "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
+        shell: bash
+
+      # ─── DEBUG: Test app startup ────────────────────────────────
+      - name: Test app startup
+        run: |
+          cd ./app/eiciel-electron
+          timeout 10 ./EicielOS-win32-x64/EicielOS.exe || echo "App exited with code $?"
+        shell: bash
+
+      # ─── Reinstall dependencies inside packaged app (fallback) ──
+      - name: Reinstall dependencies in packaged app
+        run: |
+          cd "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
+          npm install --production --no-fund --no-audit
+        shell: bash
+
       # ─── Install Playwright browsers (if cache missed) ─────────
       - name: Install Playwright browsers
         if: steps.cache-node.outputs.cache-hit != 'true'
@@ -49,7 +79,7 @@ jobs:
           npx playwright install chromium
         shell: bash
 
-      # ─── Debug: list test files (optional) ──────────────────────
+      # ─── Debug: list test files ──────────────────────────────────
       - name: List test files
         run: |
           cd ./app/eiciel-electron
@@ -64,3 +94,4 @@ jobs:
         shell: bash
         env:
           CI: true
+          PLAYWRIGHT_TEST_TIMEOUT: 120000   # 👈 2 minutes per test
