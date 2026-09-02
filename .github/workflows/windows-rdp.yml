@@ -41,7 +41,7 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── Create the NEW mouse‑score security test ──────────────
+      # ─── Create the mouse‑score security test ──────────────────
       - name: Create Playwright Test File
         run: |
           cd ./app
@@ -53,17 +53,16 @@ jobs:
           let app, window;
 
           test.beforeAll(async () => {
-            test.setTimeout(60000); // allow time for decryption/startup
+            test.setTimeout(60000);
 
             const exePath = path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');
             app = await _electron.launch({
               executablePath: exePath,
-              env: { ...process.env, EICIEL_TEST_MODE: '1' }, // 👈 critical
+              env: { ...process.env, EICIEL_TEST_MODE: '1' },
             });
             window = await app.firstWindow();
             await window.waitForLoadState('domcontentloaded');
 
-            // Auto-login (if login overlay appears)
             const loginOverlay = window.locator('#loginOverlay');
             if (await loginOverlay.isVisible()) {
               await window.locator('#loginPasskeyInput').fill('EICIEL-2026');
@@ -71,23 +70,34 @@ jobs:
               await window.locator('#desktopArea').waitFor({ state: 'visible' });
             }
 
-            // Enable test mode – all breach actions are simulated
             await window.evaluate(() => window.api.enableTestMode());
           });
 
           test.afterAll(async () => {
-            if (app) await app.close();
+            if (!app) return;
+
+            // Try graceful close, but force kill if it hangs
+            try {
+              await Promise.race([
+                app.close(),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 5000))
+              ]);
+            } catch (e) {
+              console.warn('App close timed out, killing process...');
+              try {
+                if (app.process && app.process()) {
+                  app.process().kill('SIGTERM');
+                }
+              } catch (e2) {
+                console.warn('Force kill failed:', e2);
+              }
+            }
           });
 
-          // ─── Only one test: verify mouse‑score breach ──────────
           test('Mouse‑score breach should trigger', async () => {
-            // Trigger a low mouse score (score < 1)
             await window.evaluate(() => window.api.mouseScore(0));
-
-            // Wait for breach to process
             await window.waitForTimeout(1500);
 
-            // Verify spies
             const spies = await window.evaluate(() => window.api.getTestSpies());
             console.log('Spies:', spies);
 
@@ -100,12 +110,11 @@ jobs:
           EOF
         shell: bash
 
-      # ─── Install Playwright (if cache missed) ──────────────────
-      - name: Install Playwright
+      # ─── Install Playwright browsers (if cache missed) ────────
+      - name: Install Playwright browsers
         if: steps.cache-node.outputs.cache-hit != 'true'
         run: |
           cd ./app/eiciel-electron
-          npm install @playwright/test
           npx playwright install chromium
         shell: bash
 
@@ -120,7 +129,7 @@ jobs:
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
-          npm test   # uses cross-env to set EICIEL_TEST_MODE
+          npm test
         shell: bash
         env:
           CI: true
