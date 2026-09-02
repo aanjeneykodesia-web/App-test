@@ -1,40 +1,49 @@
-name: External Bot Test
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+name: Playwright Security Tests
+
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:   # enables manual trigger from UI
+  workflow_dispatch:
 
 jobs:
-  attack-test:
+  test:
     runs-on: windows-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout code
+      # ─── 1. Clone your app repo ──────────────────────────────
+      - name: Checkout Eiciel OS
         uses: actions/checkout@v4
+        with:
+          repository: aanjeneykodesia-web/App-test   # <-- replace with your repo
+          path: C:\app
+          token: ${{ secrets.PAT_TOKEN || github.token }}
 
+      # ─── 2. Setup Node.js ────────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
+          node-version: '18'
 
-      - name: Install dependencies
-        run: npm install --include=dev
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-
-      - name: Build Eiciel OS (CI=false)
+      # ─── 3. Build the protected app ──────────────────────────
+      - name: Build Eiciel OS
         run: |
-          # Override CI environment variable to force build
-          $env:CI = "false"
-          npm run build
-        shell: pwsh   # PowerShell (cross‑platform)
+          cd C:\app
+          chmod +x build-protected.sh
+          bash build-protected.sh
+        shell: bash
 
-      - name: Run external bot attack
-        run: node attack-bot.js
-        # The bot will launch the built .exe or source, as configured
+      # ─── 4. Install Playwright dependencies ──────────────────
+      - name: Install Playwright
+        run: |
+          cd C:\app\eiciel-electron
+          npm install
+          npx playwright install chromium
+        shell: bash
+
+      # ─── 5. Run the security tests ───────────────────────────
+      - name: Run Security Tests
+        run: |
+          cd C:\app\eiciel-electron
+          npx playwright test security-attacks.spec.js --project=electron
+        shell: bash
+        env:
+          CI: true
