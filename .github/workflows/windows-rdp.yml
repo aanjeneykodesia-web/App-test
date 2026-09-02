@@ -1,5 +1,6 @@
 name: External Bot Test
-
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 on:
   push:
     branches: [ main ]
