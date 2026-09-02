@@ -28,7 +28,7 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── Create a CommonJS test file ──────────────────────────
+      # ─── Create the security test file ──────────────────────────
       - name: Create Playwright Test File
         run: |
           cd ./app
@@ -96,7 +96,6 @@ jobs:
               }
             });
             const spies = await window.evaluate(() => window.api.getTestSpies());
-            // In test mode, forceBreach might be allowed, but we check that it doesn't cause a crash.
             expect(spies.forceBreach).toBeUndefined();
           });
 
@@ -129,10 +128,11 @@ jobs:
           EOF
         shell: bash
 
+      # ─── Install Playwright (explicitly) ─────────────────────────
       - name: Install Playwright
         run: |
           cd ./app/eiciel-electron
-          npm install
+          npm install @playwright/test
           npx playwright install chromium
         shell: bash
 
@@ -142,6 +142,7 @@ jobs:
           dir tests
         shell: bash
 
+      # ─── Run the security tests ──────────────────────────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
