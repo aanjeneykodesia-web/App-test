@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: '18'
 
-      # ─── Cache node_modules ──────────────────────────────────────
+      # ─── Cache node_modules (only) ──────────────────────────────
       - name: Cache node_modules
         id: cache-node
         uses: actions/cache@v3
@@ -42,26 +42,15 @@ jobs:
           npx playwright install chromium
         shell: bash
 
-      # ─── Cache the built .exe ──────────────────────────────────
-      - name: Cache build output
-        id: cache-build
-        uses: actions/cache@v3
-        with:
-          path: D:/data/EicielOS
-          key: ${{ runner.os }}-build-${{ hashFiles('app/**/*.js', 'app/**/*.json', 'app/**/*.html', 'app/build-protected.sh') }}
-          restore-keys: |
-            ${{ runner.os }}-build-
-
-      # ─── Build the app (only if not cached) ────────────────────
+      # ─── Always build the app (no cache) ───────────────────────
       - name: Build Eiciel OS
-        if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           cd ./app
           chmod +x build-protected.sh
           bash build-protected.sh
         shell: bash
 
-      # ─── Create the security test file ──────────────────────────
+      # ─── Create the security test file (always) ────────────────
       - name: Create Playwright Test File
         run: |
           cd ./app
@@ -161,12 +150,14 @@ jobs:
           EOF
         shell: bash
 
+      # ─── Debug: list files in the test folder ──────────────────
       - name: List test files
         run: |
           cd ./app/eiciel-electron
           dir tests
         shell: bash
 
+      # ─── Run the security tests ──────────────────────────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
