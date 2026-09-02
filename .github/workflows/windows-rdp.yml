@@ -9,12 +9,12 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      # ─── 1. Clone your app repo ──────────────────────────────
+      # ─── 1. Clone your app repository ──────────────────────────
       - name: Checkout Eiciel OS
         uses: actions/checkout@v4
         with:
           repository: aanjeneykodesia-web/App-test   # <-- replace with your repo
-          path: C:\app
+          path: app                                 # <-- relative path inside workspace
           token: ${{ secrets.PAT_TOKEN || github.token }}
 
       # ─── 2. Setup Node.js ────────────────────────────────────
@@ -26,7 +26,7 @@ jobs:
       # ─── 3. Build the protected app ──────────────────────────
       - name: Build Eiciel OS
         run: |
-          cd C:\app
+          cd ./app
           chmod +x build-protected.sh
           bash build-protected.sh
         shell: bash
@@ -34,7 +34,7 @@ jobs:
       # ─── 4. Install Playwright dependencies ──────────────────
       - name: Install Playwright
         run: |
-          cd C:\app\eiciel-electron
+          cd ./app/eiciel-electron
           npm install
           npx playwright install chromium
         shell: bash
@@ -42,7 +42,7 @@ jobs:
       # ─── 5. Run the security tests ───────────────────────────
       - name: Run Security Tests
         run: |
-          cd C:\app\eiciel-electron
+          cd ./app/eiciel-electron
           npx playwright test security-attacks.spec.js --project=electron
         shell: bash
         env:
