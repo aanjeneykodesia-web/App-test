@@ -5,10 +5,11 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+  workflow_dispatch:   # enables manual trigger from UI
 
 jobs:
   attack-test:
-    runs-on: windows-latest   # Use Windows to match the intended environment
+    runs-on: windows-latest
 
     steps:
       - name: Checkout code
@@ -26,13 +27,13 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Build executable (CI=false)
+      - name: Build Eiciel OS (CI=false)
         run: |
-          # Force the build (overrides CI detection)
-          export CI=false
+          # Override CI environment variable to force build
+          $env:CI = "false"
           npm run build
-        shell: bash
+        shell: pwsh   # PowerShell (cross‑platform)
 
       - name: Run external bot attack
         run: node attack-bot.js
-        # This will launch the built app or the source app
+        # The bot will launch the built .exe or source, as configured
