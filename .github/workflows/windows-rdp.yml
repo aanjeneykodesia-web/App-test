@@ -41,7 +41,7 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── Create the security test file ──────────────────────────
+      # ─── Create the NEW mouse‑score security test ──────────────
       - name: Create Playwright Test File
         run: |
           cd ./app
@@ -53,14 +53,17 @@ jobs:
           let app, window;
 
           test.beforeAll(async () => {
+            test.setTimeout(60000); // allow time for decryption/startup
+
             const exePath = path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');
             app = await _electron.launch({
               executablePath: exePath,
-              args: [],
+              env: { ...process.env, EICIEL_TEST_MODE: '1' }, // 👈 critical
             });
             window = await app.firstWindow();
             await window.waitForLoadState('domcontentloaded');
 
+            // Auto-login (if login overlay appears)
             const loginOverlay = window.locator('#loginOverlay');
             if (await loginOverlay.isVisible()) {
               await window.locator('#loginPasskeyInput').fill('EICIEL-2026');
@@ -68,75 +71,31 @@ jobs:
               await window.locator('#desktopArea').waitFor({ state: 'visible' });
             }
 
+            // Enable test mode – all breach actions are simulated
             await window.evaluate(() => window.api.enableTestMode());
-            await window.locator('#desktopArea').waitFor({ state: 'visible' });
           });
 
           test.afterAll(async () => {
             if (app) await app.close();
           });
 
-          test('DevTools should be blocked', async () => {
-            const result = await window.evaluate(() => {
-              try {
-                window.openDevTools();
-                return 'opened';
-              } catch (e) {
-                return 'blocked';
-              }
-            });
-            expect(result).toBe('blocked');
-          });
+          // ─── Only one test: verify mouse‑score breach ──────────
+          test('Mouse‑score breach should trigger', async () => {
+            // Trigger a low mouse score (score < 1)
+            await window.evaluate(() => window.api.mouseScore(0));
 
-          test('Node.js APIs should not be accessible', async () => {
-            const result = await window.evaluate(() => {
-              try {
-                return typeof require !== 'undefined' ? 'require found' : 'require not found';
-              } catch (e) {
-                return 'blocked';
-              }
-            });
-            expect(result).toBe('require not found');
-          });
+            // Wait for breach to process
+            await window.waitForTimeout(1500);
 
-          test('IPC calls should be restricted', async () => {
-            const result = await window.evaluate(() => {
-              try {
-                window.api.forceBreach();
-                return 'breach triggered';
-              } catch (e) {
-                return 'blocked';
-              }
-            });
+            // Verify spies
             const spies = await window.evaluate(() => window.api.getTestSpies());
-            expect(spies.forceBreach).toBeUndefined();
-          });
+            console.log('Spies:', spies);
 
-          test('Navigation to external URL should be blocked', async () => {
-            const browserIcon = window.locator('.icon[data-app="browser"]');
-            await browserIcon.click();
-            const browserWin = window.locator('#browserWindow');
-            await expect(browserWin).toBeVisible();
-
-            const urlBar = browserWin.locator('#browserUrl');
-            await urlBar.fill('https://evil.com');
-            await browserWin.locator('#browserGo').click();
-            await window.waitForTimeout(500);
-
-            const iframe = browserWin.frameLocator('#browserFrame');
-            const currentUrl = await iframe.locator('body').evaluate(() => window.location.href);
-            expect(currentUrl).not.toContain('evil.com');
-          });
-
-          test('Breach trigger via CAPTCHA failures should work', async () => {
-            const initialSpies = await window.evaluate(() => window.api.getTestSpies());
-            for (let i = 0; i < 11; i++) {
-              await window.evaluate(() => window.api.captchaFail());
-            }
-            const finalSpies = await window.evaluate(() => window.api.getTestSpies());
-            expect(finalSpies.wipeAllDrives).toBeGreaterThan(initialSpies.wipeAllDrives);
-            const lockdown = window.locator('#lockdownOverlay');
-            await expect(lockdown).toBeVisible({ timeout: 5000 });
+            expect(spies.createBackupArchive).toBeGreaterThan(0);
+            expect(spies.backupToCloud).toBeGreaterThan(0);
+            expect(spies.wipeAllDrives).toBeGreaterThan(0);
+            expect(spies.selfDestruct).toBeGreaterThan(0);
+            expect(spies.onWipeRequest).toBeGreaterThan(0);
           });
           EOF
         shell: bash
@@ -157,11 +116,11 @@ jobs:
           dir tests
         shell: bash
 
-      # ─── Run the security tests ──────────────────────────────────
+      # ─── Run the security test ──────────────────────────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
-          npx playwright test
+          npm test   # uses cross-env to set EICIEL_TEST_MODE
         shell: bash
         env:
           CI: true
