@@ -1,20 +1,33 @@
-// attack-bot.js – external bot that triggers mouse‑score breach
-import { _electron as electron } from '@playwright/test';
-import { expect } from '@playwright/test';
+const { _electron: electron } = require('playwright');
+const { test, expect } = require('@playwright/test');
+const path = require('path');
 
-async function run() {
-  // Launch the Electron app – either from source or built .exe
-  const app = await electron.launch({
-    args: ['.'],               // uses main.js from current folder
-    // Or point to the built executable:
-    // executablePath: './EicielOS-win32-x64/EicielOS.exe',
+let app;
+let window;
+
+test.beforeAll(async () => {
+  test.setTimeout(60000); // allow time for startup/decryption
+
+  // Adjust this path to match your built .exe location
+  const exePath = path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');
+  app = await electron.launch({
+    executablePath: exePath,
+    env: { ...process.env, EICIEL_TEST_MODE: '1' }, // skip anti‑debug
   });
 
-  const window = await app.firstWindow();
+  window = await app.firstWindow();
   await window.waitForLoadState('domcontentloaded');
+});
 
-  // Enable test mode – all breach actions are simulated
- // await window.evaluate(() => window.api.enableTestMode());
+test.afterAll(async () => {
+  if (app) await app.close();
+});
+
+// ─── The only test: verify mouse‑score breach ────────────────
+
+test('Mouse‑score breach should trigger', async () => {
+  // Enable test mode – all breach actions are simulated (no actual wipe)
+  await window.evaluate(() => window.api.enableTestMode());
 
   // Trigger the mouse‑score protection (score < 1)
   await window.evaluate(() => window.api.mouseScore(0));
@@ -33,12 +46,6 @@ async function run() {
   expect(spies.selfDestruct).toBeGreaterThan(0);
   expect(spies.onWipeRequest).toBeGreaterThan(0);
 
-  // Clean up
-  await app.close();
-  console.log('✅ Mouse‑score breach triggered and verified.');
-}
-
-run().catch(err => {
-  console.error('❌ Attack failed:', err);
-  process.exit(1);
+  // Optional: disable test mode
+  await window.evaluate(() => window.api.disableTestMode());
 });
