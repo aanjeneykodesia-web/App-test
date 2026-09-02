@@ -1,27 +1,38 @@
-# .github/workflows/build-and-release.yml
-name: Build and Release
+name: External Bot Test
 
 on:
   push:
-    tags:
-      - 'v*'   # triggers when you push a tag like v1.0.0
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build:
-    runs-on: windows-latest
+  attack-test:
+    runs-on: windows-latest   # Use Windows to match the intended environment
+
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          node-version: '18'
-      - name: Build protected app
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Build executable (CI=false)
         run: |
-          chmod +x build-protected.sh
-          ./build-protected.sh
+          # Force the build (overrides CI detection)
+          export CI=false
+          npm run build
         shell: bash
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe
-            D:/data/EicielOS/EicielOS-win32-x64/**/*
+
+      - name: Run external bot attack
+        run: node attack-bot.js
+        # This will launch the built app or the source app
