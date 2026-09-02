@@ -21,7 +21,40 @@ jobs:
         with:
           node-version: '18'
 
+      # ─── Cache node_modules ──────────────────────────────────────
+      - name: Cache node_modules
+        id: cache-node
+        uses: actions/cache@v3
+        with:
+          path: |
+            app/eiciel-electron/node_modules
+            ~/.cache/ms-playwright
+          key: ${{ runner.os }}-node-${{ hashFiles('app/eiciel-electron/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      # ─── Install dependencies (only if cache miss) ─────────────
+      - name: Install dependencies
+        if: steps.cache-node.outputs.cache-hit != 'true'
+        run: |
+          cd ./app/eiciel-electron
+          npm install
+          npx playwright install chromium
+        shell: bash
+
+      # ─── Cache the built .exe ──────────────────────────────────
+      - name: Cache build output
+        id: cache-build
+        uses: actions/cache@v3
+        with:
+          path: D:/data/EicielOS
+          key: ${{ runner.os }}-build-${{ hashFiles('app/**/*.js', 'app/**/*.json', 'app/**/*.html', 'app/build-protected.sh') }}
+          restore-keys: |
+            ${{ runner.os }}-build-
+
+      # ─── Build the app (only if not cached) ────────────────────
       - name: Build Eiciel OS
+        if: steps.cache-build.outputs.cache-hit != 'true'
         run: |
           cd ./app
           chmod +x build-protected.sh
@@ -128,25 +161,16 @@ jobs:
           EOF
         shell: bash
 
-      # ─── Install Playwright (explicitly) ─────────────────────────
-      - name: Install Playwright
-        run: |
-          cd ./app/eiciel-electron
-          npm install @playwright/test
-          npx playwright install chromium
-        shell: bash
-
       - name: List test files
         run: |
           cd ./app/eiciel-electron
           dir tests
         shell: bash
 
-      # ─── Run the security tests ──────────────────────────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
           npx playwright test
         shell: bash
         env:
-          CI: true
+        
