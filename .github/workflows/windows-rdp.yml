@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: '18'
 
-      # ─── Cache node_modules (only) ──────────────────────────────
+      # ─── Cache node_modules ──────────────────────────────────────
       - name: Cache node_modules
         id: cache-node
         uses: actions/cache@v3
@@ -33,16 +33,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
-      # ─── Install dependencies (only if cache miss) ─────────────
-      - name: Install dependencies
-        if: steps.cache-node.outputs.cache-hit != 'true'
-        run: |
-          cd ./app/eiciel-electron
-          npm install
-          npx playwright install chromium
-        shell: bash
-
-      # ─── Always build the app (no cache) ───────────────────────
+      # ─── Build the app ──────────────────────────────────────────
       - name: Build Eiciel OS
         run: |
           cd ./app
@@ -50,7 +41,7 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── Create the security test file (always) ────────────────
+      # ─── Create the security test file ──────────────────────────
       - name: Create Playwright Test File
         run: |
           cd ./app
@@ -150,7 +141,16 @@ jobs:
           EOF
         shell: bash
 
-      # ─── Debug: list files in the test folder ──────────────────
+      # ─── Install Playwright (if cache missed) ──────────────────
+      - name: Install Playwright
+        if: steps.cache-node.outputs.cache-hit != 'true'
+        run: |
+          cd ./app/eiciel-electron
+          npm install @playwright/test
+          npx playwright install chromium
+        shell: bash
+
+      # ─── Debug: list test files ──────────────────────────────────
       - name: List test files
         run: |
           cd ./app/eiciel-electron
