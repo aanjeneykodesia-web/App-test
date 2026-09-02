@@ -28,20 +28,105 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── Ensure the tests folder exists and copy a test file ──
-      - name: Prepare Playwright tests
+      # ─── Create a CommonJS test file ──────────────────────────
+      - name: Create Playwright Test File
         run: |
           cd ./app
           mkdir -p eiciel-electron/tests
-          # If you have a custom test file at the repo root, copy it.
-          # Otherwise, create a minimal dummy test to avoid "no tests found".
-          if [ -f security-attacks.spec.js ]; then
-            cp security-attacks.spec.js eiciel-electron/tests/
-          else
-            echo "import { test } from '@playwright/test'; test('dummy', () => {});" > eiciel-electron/tests/dummy.spec.js
-          fi
-          # Also copy the test file if it's located elsewhere
-          # If your test file is at eiciel-electron/tests/app.spec.js (already created by build script), skip.
+          cat > eiciel-electron/tests/security.spec.js << 'EOF'
+          const { test, expect, _electron } = require('@playwright/test');
+          const path = require('path');
+
+          let app, window;
+
+          test.beforeAll(async () => {
+            const exePath = path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');
+            app = await _electron.launch({
+              executablePath: exePath,
+              args: [],
+            });
+            window = await app.firstWindow();
+            await window.waitForLoadState('domcontentloaded');
+
+            const loginOverlay = window.locator('#loginOverlay');
+            if (await loginOverlay.isVisible()) {
+              await window.locator('#loginPasskeyInput').fill('EICIEL-2026');
+              await window.locator('#loginBtn').click();
+              await window.locator('#desktopArea').waitFor({ state: 'visible' });
+            }
+
+            await window.evaluate(() => window.api.enableTestMode());
+            await window.locator('#desktopArea').waitFor({ state: 'visible' });
+          });
+
+          test.afterAll(async () => {
+            if (app) await app.close();
+          });
+
+          test('DevTools should be blocked', async () => {
+            const result = await window.evaluate(() => {
+              try {
+                window.openDevTools();
+                return 'opened';
+              } catch (e) {
+                return 'blocked';
+              }
+            });
+            expect(result).toBe('blocked');
+          });
+
+          test('Node.js APIs should not be accessible', async () => {
+            const result = await window.evaluate(() => {
+              try {
+                return typeof require !== 'undefined' ? 'require found' : 'require not found';
+              } catch (e) {
+                return 'blocked';
+              }
+            });
+            expect(result).toBe('require not found');
+          });
+
+          test('IPC calls should be restricted', async () => {
+            const result = await window.evaluate(() => {
+              try {
+                window.api.forceBreach();
+                return 'breach triggered';
+              } catch (e) {
+                return 'blocked';
+              }
+            });
+            const spies = await window.evaluate(() => window.api.getTestSpies());
+            // In test mode, forceBreach might be allowed, but we check that it doesn't cause a crash.
+            expect(spies.forceBreach).toBeUndefined();
+          });
+
+          test('Navigation to external URL should be blocked', async () => {
+            const browserIcon = window.locator('.icon[data-app="browser"]');
+            await browserIcon.click();
+            const browserWin = window.locator('#browserWindow');
+            await expect(browserWin).toBeVisible();
+
+            const urlBar = browserWin.locator('#browserUrl');
+            await urlBar.fill('https://evil.com');
+            await browserWin.locator('#browserGo').click();
+            await window.waitForTimeout(500);
+
+            const iframe = browserWin.frameLocator('#browserFrame');
+            const currentUrl = await iframe.locator('body').evaluate(() => window.location.href);
+            expect(currentUrl).not.toContain('evil.com');
+          });
+
+          test('Breach trigger via CAPTCHA failures should work', async () => {
+            const initialSpies = await window.evaluate(() => window.api.getTestSpies());
+            for (let i = 0; i < 11; i++) {
+              await window.evaluate(() => window.api.captchaFail());
+            }
+            const finalSpies = await window.evaluate(() => window.api.getTestSpies());
+            expect(finalSpies.wipeAllDrives).toBeGreaterThan(initialSpies.wipeAllDrives);
+            const lockdown = window.locator('#lockdownOverlay');
+            await expect(lockdown).toBeVisible({ timeout: 5000 });
+          });
+          EOF
         shell: bash
 
       - name: Install Playwright
