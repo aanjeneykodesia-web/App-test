@@ -40,7 +40,8 @@ cat > package.json << 'EOF'
   "scripts": {
     "start": "electron .",
     "build": "electron-packager . EicielOS --platform=win32 --arch=x64 --out=D:/data/EicielOS --overwrite --no-prune",
-    "test": "cross-env EICIEL_TEST_MODE=1 npx playwright test"
+    "test": "cross-env EICIEL_TEST_MODE=1 npx playwright test",
+    "test:mouse": "cross-env EICIEL_TEST_MODE=1 npx playwright test -g \"Mouse-score breach should trigger\""
   },
   "dependencies": {
     "systeminformation": "^5.21.22",
@@ -1977,10 +1978,11 @@ fi
 
 # ─── Create a helper to run tests with the environment variable ──
 cat > run-tests.bat << 'EOF'
+cat > run-tests.bat << 'EOF'
 @echo off
 set EICIEL_TEST_MODE=1
 echo Running tests with EICIEL_TEST_MODE=1...
-npm test
+npm run test:mouse
 EOF
 echo "✅ Created run-tests.bat – use it to run tests with the correct environment."
 
