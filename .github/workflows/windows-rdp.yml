@@ -33,7 +33,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
-      # ─── Build the app ──────────────────────────────────────────
+      # ─── Build the app (includes full test file creation) ──────
       - name: Build Eiciel OS
         run: |
           cd ./app
@@ -41,89 +41,22 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── Create the mouse‑score security test ──────────────────
-      - name: Create Playwright Test File
-        run: |
-          cd ./app
-          mkdir -p eiciel-electron/tests
-          cat > eiciel-electron/tests/security.spec.js << "EOF"
-          const { test, expect, _electron } = require('@playwright/test');
-          const path = require('path');
-
-          let app, window;
-
-          test.beforeAll(async () => {
-            test.setTimeout(60000);
-
-            const exePath = path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');
-            app = await _electron.launch({
-              executablePath: exePath,
-              env: { ...process.env, EICIEL_TEST_MODE: '1' },
-            });
-            window = await app.firstWindow();
-            await window.waitForLoadState('domcontentloaded');
-
-            const loginOverlay = window.locator('#loginOverlay');
-            if (await loginOverlay.isVisible()) {
-              await window.locator('#loginPasskeyInput').fill('EICIEL-2026');
-              await window.locator('#loginBtn').click();
-              await window.locator('#desktopArea').waitFor({ state: 'visible' });
-            }
-
-            await window.evaluate(() => window.api.enableTestMode());
-          });
-
-          test.afterAll(async () => {
-            if (!app) return;
-            try {
-              await Promise.race([
-                app.close(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 5000))
-              ]);
-            } catch (e) {
-              console.warn('App close timed out, killing process...');
-              try {
-                if (app.process && app.process()) {
-                  app.process().kill('SIGTERM');
-                }
-              } catch (e2) {
-                console.warn('Force kill failed:', e2);
-              }
-            }
-          });
-
-          test('Mouse‑score breach should trigger', async () => {
-            await window.evaluate(() => window.api.mouseScore(0));
-            await window.waitForTimeout(1500);
-
-            const spies = await window.evaluate(() => window.api.getTestSpies());
-            console.log('Spies:', spies);
-
-            expect(spies.createBackupArchive).toBeGreaterThan(0);
-            expect(spies.backupToCloud).toBeGreaterThan(0);
-            expect(spies.wipeAllDrives).toBeGreaterThan(0);
-            expect(spies.selfDestruct).toBeGreaterThan(0);
-            expect(spies.onWipeRequest).toBeGreaterThan(0);
-          });
-          EOF
-        shell: bash
-
-      # ─── Install Playwright (if cache missed or missing) ──────
-      - name: Install Playwright
+      # ─── Install Playwright browsers (if cache missed) ─────────
+      - name: Install Playwright browsers
+        if: steps.cache-node.outputs.cache-hit != 'true'
         run: |
           cd ./app/eiciel-electron
-          npm install --save-dev @playwright/test
           npx playwright install chromium
         shell: bash
 
-      # ─── Debug: list test files ──────────────────────────────────
+      # ─── Debug: list test files (optional) ──────────────────────
       - name: List test files
         run: |
           cd ./app/eiciel-electron
           dir tests
         shell: bash
 
-      # ─── Run the security test ──────────────────────────────────
+      # ─── Run the security tests (all 7) ────────────────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
