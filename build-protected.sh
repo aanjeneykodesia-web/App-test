@@ -2176,7 +2176,7 @@ test('Self‑destruct on exit should trigger', async () => {
   expect(spies.selfDestructOnExit).toBeGreaterThan(initial.selfDestructOnExit);
   console.log('✅ Test 7 passed.');
 });
-      
+EOF      
 # ─── Create run-tests.bat ──────────────────────────────────────
 cat > run-tests.bat << 'EOF'
 @echo off
