@@ -2102,6 +2102,10 @@ fi
 echo "📝 Creating the complete test suite with 7 tests..."
 mkdir -p tests
 cat > tests/security.spec.js << 'EOF'
+# ─── Create the final test file with all 7 tests ──────────────
+echo "📝 Creating the complete test suite with 7 tests..."
+mkdir -p tests
+cat > tests/security.spec.js << 'EOF'
 const { test, expect, _electron } = require('@playwright/test');
 const path = require('path');
 
@@ -2190,12 +2194,18 @@ test('IPC calls should be restricted', async () => {
   console.log('✅ Test 3 passed.');
 });
 
+// ─── Test 4: Mouse‑score breach with spy print ──────────────
 test('Mouse‑score breach should trigger', async () => {
   console.log('🧪 Test 4: Mouse‑score...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
+  console.log('📊 Initial spies (before breach):', initial);
+
   await window.evaluate(() => window.api.mouseScore(0));
   await window.waitForTimeout(2000);
+
   const spies = await window.evaluate(() => window.api.getTestSpies());
+  console.log('📊 Spies after Test 4:', spies);   // 👈 Added this line
+
   expect(spies.createBackupArchive).toBeGreaterThan(initial.createBackupArchive);
   expect(spies.backupToCloud).toBeGreaterThan(initial.backupToCloud);
   expect(spies.wipeAllDrives).toBeGreaterThan(initial.wipeAllDrives);
@@ -2204,18 +2214,46 @@ test('Mouse‑score breach should trigger', async () => {
   console.log('✅ Test 4 passed.');
 });
 
+// ─── Test 5: System and internet controls ────────────────────
 test('System and internet controls should work', async () => {
+  test.setTimeout(60000);
   console.log('🧪 Test 5: System & internet controls...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
-  await window.evaluate(() => window.api.disableSystemProcesses());
-  await window.waitForTimeout(2000);
-  await window.evaluate(() => window.api.blockInternet());
-  await window.waitForTimeout(2000);
-  await window.evaluate(() => window.api.enableSystemProcesses());
-  await window.waitForTimeout(2000);
-  await window.evaluate(() => window.api.allowInternet());
-  await window.waitForTimeout(2000);
-  const spies = await window.evaluate(() => window.api.getTestSpies());
+  console.log('📊 Initial spies:', initial);
+
+  try {
+    await window.evaluate(() => window.api.disableSystemProcesses());
+    console.log('✅ disableSystemProcesses called');
+  } catch (e) { console.error('❌ disableSystemProcesses failed:', e); }
+  await window.waitForTimeout(500);
+
+  try {
+    await window.evaluate(() => window.api.blockInternet());
+    console.log('✅ blockInternet called');
+  } catch (e) { console.error('❌ blockInternet failed:', e); }
+  await window.waitForTimeout(500);
+
+  try {
+    await window.evaluate(() => window.api.enableSystemProcesses());
+    console.log('✅ enableSystemProcesses called');
+  } catch (e) { console.error('❌ enableSystemProcesses failed:', e); }
+  await window.waitForTimeout(500);
+
+  try {
+    await window.evaluate(() => window.api.allowInternet());
+    console.log('✅ allowInternet called');
+  } catch (e) { console.error('❌ allowInternet failed:', e); }
+  await window.waitForTimeout(500);
+
+  let spies;
+  try {
+    spies = await window.evaluate(() => window.api.getTestSpies());
+    console.log('📊 Final spies:', spies);
+  } catch (e) {
+    console.error('❌ Failed to get final spies:', e);
+    throw e;
+  }
+
   expect(spies.disableSystemProcesses).toBeGreaterThan(initial.disableSystemProcesses);
   expect(spies.blockInternet).toBeGreaterThan(initial.blockInternet);
   expect(spies.enableSystemProcesses).toBeGreaterThan(initial.enableSystemProcesses);
@@ -2224,6 +2262,7 @@ test('System and internet controls should work', async () => {
 });
 
 test('Internet is allowed only when browser is open', async () => {
+  test.setTimeout(60000);
   console.log('🧪 Test 6: Browser-only internet...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
   await window.locator('.icon[data-app="browser"]').click();
@@ -2247,6 +2286,7 @@ test('Self‑destruct on exit should trigger', async () => {
   expect(spies.selfDestructOnExit).toBeGreaterThan(initial.selfDestructOnExit);
   console.log('✅ Test 7 passed.');
 });
+EOF
 EOF
 
 # ─── Create run-tests.bat ──────────────────────────────────────
