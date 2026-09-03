@@ -1876,9 +1876,14 @@ function log(msg) {
   try {
     fs.appendFileSync(logPath, new Date().toISOString() + ' - ' + msg + '\n');
   } catch(e) {}
+  // Also print to stderr so it appears in the manual run output
+  console.error('[Loader] ' + msg);
 }
-log('=== Loader started ===');
 
+log('=== Loader started ===');
+console.error('🔧 Loader: process started, PID:', process.pid);
+
+// ─── Anti‑debug (skip in test mode) ────────────────────────────
 if (!process.env.EICIEL_TEST_MODE) {
   if (process.argv.includes('--inspect') || process.argv.includes('--inspect-brk')) {
     log('Debugger detected – exiting');
@@ -1899,16 +1904,21 @@ if (!process.env.EICIEL_TEST_MODE) {
 }
 
 app.whenReady().then(() => {
+  console.error('🔧 Loader: app.whenReady fired');
   log('app.whenReady() fired');
+
   const ENC_PATH = path.join(__dirname, 'source.enc');
   log('Looking for source.enc at: ' + ENC_PATH);
+  console.error('🔧 Loader: ENC_PATH =', ENC_PATH);
   if (!fs.existsSync(ENC_PATH)) {
     log('source.enc NOT FOUND');
+    console.error('❌ Loader: source.enc is missing!');
     dialog.showErrorBox('Error', 'Missing source.enc. Reinstall the application.');
     app.quit();
     return;
   }
   log('source.enc found, size: ' + fs.statSync(ENC_PATH).size);
+  console.error('✅ Loader: source.enc found, size:', fs.statSync(ENC_PATH).size);
 
   const PASSWORD = 'EICIEL-PROTECT-2026';
   function decryptBlob() {
@@ -1924,10 +1934,13 @@ app.whenReady().then(() => {
 
   const tempDir = path.join(os.tmpdir(), 'eiciel_decrypted_' + Date.now());
   log('Temp dir: ' + tempDir);
+  console.error('🔧 Loader: tempDir =', tempDir);
   try {
     fs.mkdirSync(tempDir, { recursive: true });
+    console.error('✅ Loader: tempDir created');
   } catch(e) {
     log('Failed to create temp dir: ' + e.stack);
+    console.error('❌ Loader: failed to create tempDir:', e.message);
     dialog.showErrorBox('Error', 'Could not create temporary folder.');
     app.quit();
     return;
@@ -1935,61 +1948,97 @@ app.whenReady().then(() => {
 
   try {
     log('Decrypting...');
+    console.error('🔧 Loader: decrypting blob...');
     const decrypted = decryptBlob();
     log('Decrypted size: ' + decrypted.length);
+    console.error('✅ Loader: decrypted size:', decrypted.length);
     const zipPath = path.join(tempDir, 'source.zip');
     fs.writeFileSync(zipPath, decrypted);
     log('Decrypted zip written.');
+    console.error('✅ Loader: zip written to', zipPath);
     log('Extracting with adm-zip...');
+    console.error('🔧 Loader: extracting zip...');
     const zip = new AdmZip(zipPath);
     zip.extractAllTo(tempDir, true);
     log('Extraction complete.');
+    console.error('✅ Loader: extraction complete');
     fs.unlinkSync(zipPath);
+    console.error('✅ Loader: zip deleted');
   } catch(err) {
     log('Decryption/extraction failed: ' + err.stack);
+    console.error('❌ Loader: decryption/extraction failed:', err.message);
     dialog.showErrorBox('Decryption Failed', 'The software could not be loaded.');
     app.quit();
     return;
   }
 
+  // ─── List extracted files for debugging ────────────────────────
+  try {
+    const files = fs.readdirSync(tempDir);
+    console.error('🔧 Loader: extracted files:', files.join(', '));
+  } catch(e) {
+    console.error('⚠️ Loader: could not list extracted files:', e.message);
+  }
+
   const mainPath = path.join(tempDir, 'main.js');
   log('Loading main.js from: ' + mainPath);
+  console.error('🔧 Loader: mainPath =', mainPath);
   if (!fs.existsSync(mainPath)) {
     log('main.js not found after extraction!');
+    console.error('❌ Loader: main.js not found!');
     dialog.showErrorBox('Error', 'Extracted files missing main.js.');
     app.quit();
     return;
   }
+  console.error('✅ Loader: main.js exists');
 
+  // ─── Set NODE_PATH ──────────────────────────────────────────────
   const appNodeModules = path.join(__dirname, 'node_modules');
   process.env.NODE_PATH = appNodeModules;
   require('module').Module._initPaths();
   log('NODE_PATH set to: ' + process.env.NODE_PATH);
+  console.error('🔧 Loader: NODE_PATH =', process.env.NODE_PATH);
   module.paths.push(appNodeModules);
 
+  // ─── Check for systeminformation ───────────────────────────────
   try {
     const siPath = require.resolve('systeminformation', { paths: [__dirname] });
     log('systeminformation resolved to: ' + siPath);
+    console.error('✅ Loader: systeminformation found at', siPath);
   } catch(e) {
     log('systeminformation NOT found in app node_modules');
+    console.error('⚠️ Loader: systeminformation NOT found');
     try {
       const files = fs.readdirSync(appNodeModules);
       log('node_modules contents: ' + files.join(', '));
+      console.error('🔧 Loader: node_modules contents:', files.join(', '));
     } catch(e2) {
       log('Cannot read node_modules: ' + e2.message);
+      console.error('⚠️ Loader: cannot read node_modules:', e2.message);
     }
   }
 
   process.env.EICIEL_TEMP_DIR = tempDir;
+  console.error('🔧 Loader: EICIEL_TEMP_DIR set to', tempDir);
+
   try {
     log('Requiring main.js...');
+    console.error('🔧 Loader: requiring main.js...');
     require(mainPath);
     log('main.js loaded successfully.');
+    console.error('✅ Loader: main.js loaded successfully.');
   } catch(err) {
     log('Failed to load main.js: ' + err.stack);
+    console.error('❌ Loader: failed to load main.js:', err.message);
     dialog.showErrorBox('Loading Failed', 'The application could not start: ' + err.message);
     app.quit();
   }
+});
+
+// Also catch any unhandled errors during app startup
+process.on('uncaughtException', (err) => {
+  console.error('❌ Loader uncaughtException:', err.message);
+  log('Uncaught exception: ' + err.stack);
 });
 EOF
 
