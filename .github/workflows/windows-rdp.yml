@@ -57,11 +57,10 @@ jobs:
           dir "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
         shell: bash
 
-      # ─── DEBUG: Test app startup ────────────────────────────────
+      # ─── DEBUG: Test app startup (correct path) ────────────────
       - name: Test app startup
         run: |
-          cd ./app/eiciel-electron
-          timeout 10 ./EicielOS-win32-x64/EicielOS.exe || echo "App exited with code $?"
+          timeout 10 "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" || echo "App exited with code $?"
         shell: bash
 
       # ─── Reinstall dependencies inside packaged app (fallback) ──
@@ -94,4 +93,4 @@ jobs:
         shell: bash
         env:
           CI: true
-          PLAYWRIGHT_TEST_TIMEOUT: 120000   # 👈 2 minutes per test
+          PLAYWRIGHT_TEST_TIMEOUT: 120000
