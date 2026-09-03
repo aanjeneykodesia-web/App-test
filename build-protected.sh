@@ -2027,7 +2027,7 @@ fi
 
 # ─── Create the final test file with all 7 tests ──────────────
 echo "📝 Creating the complete test suite with 7 tests..."
-mkdir -p tests   # <-- ensure directory exists
+mkdir -p tests
 cat > tests/security.spec.js << 'EOF'
 const { test, expect, _electron } = require('@playwright/test');
 const path = require('path');
@@ -2035,7 +2035,7 @@ const path = require('path');
 let app, window;
 
 test.beforeAll(async () => {
-  test.setTimeout(180000); // 3 minutes
+  test.setTimeout(180000);
   const exePath = path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');
   console.log('🚀 Launching Electron app...');
   app = await _electron.launch({
@@ -2083,7 +2083,6 @@ test.afterAll(async () => {
   console.log('✅ Cleanup complete.');
 });
 
-// ─── Tests 1–3: basic security checks ──────────────────────────
 test('DevTools should be blocked', async () => {
   console.log('🧪 Test 1: DevTools...');
   const result = await window.evaluate(() => {
@@ -2115,7 +2114,6 @@ test('IPC calls should be restricted', async () => {
   console.log('✅ Test 3 passed.');
 });
 
-// ─── Test 4: Mouse‑score breach ──────────────────────────────────
 test('Mouse‑score breach should trigger', async () => {
   console.log('🧪 Test 4: Mouse‑score...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
@@ -2130,7 +2128,6 @@ test('Mouse‑score breach should trigger', async () => {
   console.log('✅ Test 4 passed.');
 });
 
-// ─── Test 5: System and internet controls ──────────────────────
 test('System and internet controls should work', async () => {
   console.log('🧪 Test 5: System & internet controls...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
@@ -2150,7 +2147,6 @@ test('System and internet controls should work', async () => {
   console.log('✅ Test 5 passed.');
 });
 
-// ─── Test 6: Browser‑only internet toggle ──────────────────────
 test('Internet is allowed only when browser is open', async () => {
   console.log('🧪 Test 6: Browser-only internet...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
@@ -2167,6 +2163,15 @@ test('Internet is allowed only when browser is open', async () => {
   console.log('✅ Test 6 passed.');
 });
 
+test('Self‑destruct on exit should trigger', async () => {
+  console.log('🧪 Test 7: Self‑destruct on exit...');
+  const initial = await window.evaluate(() => window.api.getTestSpies());
+  await window.evaluate(() => window.api.selfDestructOnExit());
+  const spies = await window.evaluate(() => window.api.getTestSpies());
+  expect(spies.selfDestructOnExit).toBeGreaterThan(initial.selfDestructOnExit);
+  console.log('✅ Test 7 passed.');
+});
+EOF
 // ─── Test 7: Self‑destruct on exit ─────────────────────────────
 test('Self‑destruct on exit should trigger', async () => {
   console.log('🧪 Test 7: Self‑destruct on exit...');
