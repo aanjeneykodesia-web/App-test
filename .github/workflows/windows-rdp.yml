@@ -8,9 +8,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
 
-    # ─── Set test mode globally for all steps ─────────────────────
     env:
       EICIEL_TEST_MODE: '1'
+      NODE_OPTIONS: "--max-old-space-size=8192"   # 👈 8 GB heap
 
     steps:
       - name: Checkout Eiciel OS
@@ -25,7 +25,6 @@ jobs:
         with:
           node-version: '18'
 
-      # ─── Cache node_modules ──────────────────────────────────────
       - name: Cache node_modules
         id: cache-node
         uses: actions/cache@v3
@@ -37,7 +36,6 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
-      # ─── Build the app ──────────────────────────────────────────
       - name: Build Eiciel OS
         run: |
           cd ./app
@@ -45,32 +43,19 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── (Optional) Show loader log for debugging ──────────────
-      - name: Show loader log
-        run: |
-          if (Test-Path "$env:APPDATA\eiciel_loader.log") {
-            Get-Content "$env:APPDATA\eiciel_loader.log"
-          } else {
-            Write-Host "Loader log not found."
-          }
-        shell: pwsh
-
-      # ─── Reinstall dependencies inside packaged app (fallback) ──
       - name: Reinstall dependencies in packaged app
         run: |
           cd "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
           npm install --production --no-fund --no-audit
         shell: bash
 
-      # ─── Install Playwright browsers (if cache missed) ─────────
-      - name: Install Playwright browsers
+      - name: Install Playwright browsers (if cache missed)
         if: steps.cache-node.outputs.cache-hit != 'true'
         run: |
           cd ./app/eiciel-electron
           npx playwright install chromium
         shell: bash
 
-      # ─── Run the security tests ────────────────────────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
@@ -79,4 +64,3 @@ jobs:
         env:
           CI: true
           PLAYWRIGHT_TEST_TIMEOUT: 120000
-          NODE_OPTIONS: "--max-old-space-size=4096"   # Prevents OOM
