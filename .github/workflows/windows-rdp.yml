@@ -5,20 +5,19 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-  workflow_dispatch:   # allows manual run from the Actions tab
+  workflow_dispatch:
 
 jobs:
   build-and-test:
-    runs-on: windows-latest   # required because the app uses Windows-specific APIs
-
+    runs-on: windows-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22          # Node 22 is stable and not deprecated
+          node-version: 22
           cache: 'npm'
 
       - name: Install dependencies
@@ -27,29 +26,18 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      # Run the build script – it handles obfuscation, encryption, and packaging.
-      # We override CI=false to force the build step (the script skips build if CI is set).
-      - name: Build protected app (CI=false)
+      - name: Build app (CI=false)
         run: |
           $env:CI = "false"
-          bash deepseek_bash_20260903_97a644.sh
+          bash deepseek_bash_20260903_2460b5_fixed.sh
         shell: pwsh
 
-      # Run the Playwright tests – they will launch the built .exe and verify:
-      # - DevTools blocked
-      # - Node.js APIs blocked
-      # - IPC restricted
-      # - Mouse-score breach triggers (Test 4)
-      # - System & internet controls work (Test 5)
-      # - Internet allowed only when browser is open (Test 6)
-      # - Self-destruct on exit (Test 7)
-      - name: Run security test suite
+      - name: Run tests
         run: npm test
         env:
-          EICIEL_TEST_MODE: 1        # ensures test mode is active from the start
+          EICIEL_TEST_MODE: 1
 
-      # Optional: upload the built executable as an artifact
-      - name: Upload built executable
+      - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
           name: EicielOS-win32-x64
