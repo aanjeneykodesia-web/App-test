@@ -2065,7 +2065,7 @@ test.afterAll(async () => {
   try {
     await Promise.race([
       app.close(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 5000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 10000))
     ]);
   } catch (e) {
     console.warn('App close timed out, killing process...');
