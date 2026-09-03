@@ -2277,7 +2277,7 @@ test('System and internet controls should work', async () => {
   expect(spies.enableSystemProcesses).toBeGreaterThan(initial.enableSystemProcesses);
   expect(spies.allowInternet).toBeGreaterThan(initial.allowInternet);
   console.log('✅ Test 5 passed.');
-});
+);
 
   try {
     await window.evaluate(() => window.api.disableSystemProcesses());
