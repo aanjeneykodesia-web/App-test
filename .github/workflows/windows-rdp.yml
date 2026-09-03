@@ -10,34 +10,32 @@ on:
 jobs:
   build-and-test:
     runs-on: windows-latest
+
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: 'npm'
+          # cache: 'npm'   ← REMOVED to avoid lock file error
 
-      - name: Install dependencies
-        run: npm install --include=dev --no-fund --no-audit
-
-      - name: Install Playwright browsers
+      - name: Install Playwright browsers (required for tests)
         run: npx playwright install --with-deps chromium
 
-      - name: Build app (CI=false)
+      - name: Build protected app (CI=false)
         run: |
           $env:CI = "false"
-          bash deepseek_bash_20260903_2460b5_fixed.sh
+          bash ./deepseek_bash_20260903_2460b5_fixed.sh
         shell: pwsh
 
-      - name: Run tests
+      - name: Run security tests
         run: npm test
         env:
           EICIEL_TEST_MODE: 1
 
-      - name: Upload executable
+      - name: Upload built executable
         uses: actions/upload-artifact@v4
         with:
           name: EicielOS-win32-x64
