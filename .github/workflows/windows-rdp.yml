@@ -1,42 +1,131 @@
-name: Eiciel OS – Build & Test
+name: Playwright Security Tests
 
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build-and-test:
+  test:
     runs-on: windows-latest
+    timeout-minutes: 30
+
+    env:
+      EICIEL_TEST_MODE: '1'
+      NODE_OPTIONS: "--max-old-space-size=8192"
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Eiciel OS
         uses: actions/checkout@v4
+        with:
+          repository: aanjeneykodesia-web/App-test
+          path: app
+          token: ${{ secrets.PAT_TOKEN || github.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          # cache: 'npm'   ← REMOVED to avoid lock file error
+          node-version: '18'
 
-      - name: Install Playwright browsers (required for tests)
-        run: npx playwright install --with-deps chromium
+      - name: Cache node_modules
+        id: cache-node
+        uses: actions/cache@v3
+        with:
+          path: |
+            app/eiciel-electron/node_modules
+            ~/.cache/ms-playwright
+          key: ${{ runner.os }}-node-${{ hashFiles('app/eiciel-electron/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
 
-      - name: Build protected app (CI=false)
+      - name: Build Eiciel OS
         run: |
-          $env:CI = "false"
-          bash ./deepseek_bash_20260903_2460b5_fixed.sh
+          cd ./app
+          chmod +x build-protected.sh
+          bash build-protected.sh
+        shell: bash
+
+      # ─── DEBUGGING STEPS ──────────────────────────────────────────
+      # (Keep these – they help diagnose issues)
+      - name: Check if source.enc exists
+        run: |
+          if (Test-Path "D:/data/EicielOS/EicielOS-win32-x64/resources/app/source.enc") {
+            Write-Host "✅ source.enc exists."
+          } else {
+            Write-Host "❌ source.enc is missing!"
+            exit 1
+          }
         shell: pwsh
 
-      - name: Run security tests
-        run: npm test
-        env:
-          EICIEL_TEST_MODE: 1
+      - name: Show loader log (if exists)
+        run: |
+          if (Test-Path "$env:APPDATA\eiciel_loader.log") {
+            Write-Host "=== Loader log from APPDATA ==="
+            Get-Content "$env:APPDATA\eiciel_loader.log"
+          } else {
+            Write-Host "Loader log not found in APPDATA."
+          }
+          if (Test-Path "$env:TEMP\eiciel_loader.log") {
+            Write-Host "=== Loader log from TEMP ==="
+            Get-Content "$env:TEMP\eiciel_loader.log"
+          } else {
+            Write-Host "Loader log not found in TEMP."
+          }
+        shell: pwsh
 
-      - name: Upload built executable
-        uses: actions/upload-artifact@v4
-        with:
-          name: EicielOS-win32-x64
-          path: D:/data/EicielOS/EicielOS-win32-x64
+      - name: List packaged app files
+        run: |
+          Write-Host "=== Contents of resources/app ==="
+          dir "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
+        shell: pwsh
+
+      - name: Run app and capture stderr/stdout (timeout 15s)
+        run: |
+          Write-Host "=== Running app and capturing stderr/stdout (timeout 15s) ==="
+          $process = Start-Process -FilePath "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" -RedirectStandardError "stderr.txt" -RedirectStandardOutput "stdout.txt" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 15
+          if (!$process.HasExited) { 
+            Write-Host "Process still running, killing..."
+            $process.Kill() 
+          }
+          Write-Host "=== STDOUT ==="
+          Get-Content stdout.txt -ErrorAction SilentlyContinue
+          Write-Host "=== STDERR ==="
+          Get-Content stderr.txt -ErrorAction SilentlyContinue
+        shell: pwsh
+
+      - name: List temp extraction directory
+        run: |
+          $tempDirs = Get-ChildItem $env:TEMP -Filter "eiciel_decrypted_*" | Sort-Object LastWriteTime -Descending
+          if ($tempDirs) {
+            $latest = $tempDirs[0].FullName
+            Write-Host "Latest temp dir: $latest"
+            Get-ChildItem $latest
+          } else {
+            Write-Host "No eiciel_decrypted_ folders found."
+          }
+        shell: pwsh
+      # ─── END DEBUG ──────────────────────────────────────────────
+
+      - name: Reinstall dependencies in packaged app
+        run: |
+          cd "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
+          npm install --production --no-fund --no-audit
+        shell: bash
+
+      - name: Install Playwright browsers (if cache missed)
+        if: steps.cache-node.outputs.cache-hit != 'true'
+        run: |
+          cd ./app/eiciel-electron
+          npx playwright install chromium
+        shell: bash
+
+      # ─── RUN ALL 7 TESTS ────────────────────────────────────────
+      - name: Run Security Tests (all 7)
+        run: |
+          cd ./app/eiciel-electron
+          npx playwright test --reporter=line
+        shell: bash
+        env:
+          CI: true
+          EICIEL_TEST_MODE: '1'
+          NODE_OPTIONS: "--max-old-space-size=8192"
+          DEBUG: pw:electron
