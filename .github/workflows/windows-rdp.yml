@@ -8,9 +8,6 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
 
-    env:
-      EICIEL_TEST_MODE: '1'   # global for all steps
-
     steps:
       - name: Checkout Eiciel OS
         uses: actions/checkout@v4
@@ -88,19 +85,20 @@ jobs:
           dir tests
         shell: bash
 
-      # ─── Show test file content (verify 7 tests) ────────────────
+      # ─── Show test file content ─────────────────────────────────
       - name: Show test file content
         run: |
           cd ./app/eiciel-electron
           cat tests/security.spec.js
         shell: bash
 
-      # ─── Run the security tests with verbose output ─────────────
+      # ─── Run the security tests with increased memory ──────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
-          npx playwright test --reporter=line --timeout=120000
+          npm test
         shell: bash
         env:
           CI: true
-          DEBUG: pw:electron   # enables Playwright Electron debug logs
+          PLAYWRIGHT_TEST_TIMEOUT: 120000
+          NODE_OPTIONS: "--max-old-space-size=4096"   # 👈 FIX OOM
