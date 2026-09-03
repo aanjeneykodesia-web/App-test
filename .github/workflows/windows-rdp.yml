@@ -8,6 +8,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
 
+    # ─── Set test mode globally for all steps ─────────────────────
+    env:
+      EICIEL_TEST_MODE: '1'
+
     steps:
       - name: Checkout Eiciel OS
         uses: actions/checkout@v4
@@ -33,7 +37,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
-      # ─── Build the app (includes full test file creation) ──────
+      # ─── Build the app ──────────────────────────────────────────
       - name: Build Eiciel OS
         run: |
           cd ./app
@@ -41,7 +45,7 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── DEBUG: Show loader log ─────────────────────────────────
+      # ─── (Optional) Show loader log for debugging ──────────────
       - name: Show loader log
         run: |
           if (Test-Path "$env:APPDATA\eiciel_loader.log") {
@@ -50,18 +54,6 @@ jobs:
             Write-Host "Loader log not found."
           }
         shell: pwsh
-
-      # ─── DEBUG: List packaged app contents ──────────────────────
-      - name: List packaged app files
-        run: |
-          dir "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
-        shell: bash
-
-      # ─── DEBUG: Test app startup (correct path) ────────────────
-      - name: Test app startup
-        run: |
-          timeout 10 "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" || echo "App exited with code $?"
-        shell: bash
 
       # ─── Reinstall dependencies inside packaged app (fallback) ──
       - name: Reinstall dependencies in packaged app
@@ -78,21 +70,7 @@ jobs:
           npx playwright install chromium
         shell: bash
 
-      # ─── Debug: list test files ──────────────────────────────────
-      - name: List test files
-        run: |
-          cd ./app/eiciel-electron
-          dir tests
-        shell: bash
-
-      # ─── Show test file content ─────────────────────────────────
-      - name: Show test file content
-        run: |
-          cd ./app/eiciel-electron
-          cat tests/security.spec.js
-        shell: bash
-
-      # ─── Run the security tests with increased memory ──────────
+      # ─── Run the security tests ────────────────────────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
@@ -101,4 +79,4 @@ jobs:
         env:
           CI: true
           PLAYWRIGHT_TEST_TIMEOUT: 120000
-          NODE_OPTIONS: "--max-old-space-size=4096"   # 👈 FIX OOM
+          NODE_OPTIONS: "--max-old-space-size=4096"   # Prevents OOM
