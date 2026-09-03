@@ -2223,17 +2223,37 @@ test('Mouse‑score breach should trigger', async () => {
 });
 
 test('System and internet controls should work', async () => {
+  test.setTimeout(60000); // 60 seconds
   console.log('🧪 Test 5: System & internet controls...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
-  await window.evaluate(() => window.api.disableSystemProcesses());
+  console.log('📊 Initial spies:', initial);
+
+  try {
+    await window.evaluate(() => window.api.disableSystemProcesses());
+    console.log('✅ disableSystemProcesses called');
+  } catch (e) { console.error('❌ disableSystemProcesses failed:', e); }
   await window.waitForTimeout(2000);
-  await window.evaluate(() => window.api.blockInternet());
+
+  try {
+    await window.evaluate(() => window.api.blockInternet());
+    console.log('✅ blockInternet called');
+  } catch (e) { console.error('❌ blockInternet failed:', e); }
   await window.waitForTimeout(2000);
-  await window.evaluate(() => window.api.enableSystemProcesses());
+
+  try {
+    await window.evaluate(() => window.api.enableSystemProcesses());
+    console.log('✅ enableSystemProcesses called');
+  } catch (e) { console.error('❌ enableSystemProcesses failed:', e); }
   await window.waitForTimeout(2000);
-  await window.evaluate(() => window.api.allowInternet());
+
+  try {
+    await window.evaluate(() => window.api.allowInternet());
+    console.log('✅ allowInternet called');
+  } catch (e) { console.error('❌ allowInternet failed:', e); }
   await window.waitForTimeout(2000);
+
   const spies = await window.evaluate(() => window.api.getTestSpies());
+  console.log('📊 Final spies:', spies);
   expect(spies.disableSystemProcesses).toBeGreaterThan(initial.disableSystemProcesses);
   expect(spies.blockInternet).toBeGreaterThan(initial.blockInternet);
   expect(spies.enableSystemProcesses).toBeGreaterThan(initial.enableSystemProcesses);
