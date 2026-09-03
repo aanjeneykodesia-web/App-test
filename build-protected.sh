@@ -2172,7 +2172,7 @@ test('Self‑destruct on exit should trigger', async () => {
   console.log('✅ Test 7 passed.');
 });
 EOF
-// ─── Test 7: Self‑destruct on exit ─────────────────────────────
+#─── Test 7: Self‑destruct on exit ─────────────────────────────
 test('Self‑destruct on exit should trigger', async () => {
   console.log('🧪 Test 7: Self‑destruct on exit...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
