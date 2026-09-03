@@ -43,6 +43,27 @@ jobs:
           bash build-protected.sh
         shell: bash
 
+      # ─── DEBUG STEPS ────────────────────────────────────────────
+      - name: Show loader log
+        run: |
+          if (Test-Path "$env:APPDATA\eiciel_loader.log") {
+            Get-Content "$env:APPDATA\eiciel_loader.log"
+          } else {
+            Write-Host "Loader log not found."
+          }
+        shell: pwsh
+
+      - name: List packaged app files
+        run: |
+          dir "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
+        shell: bash
+
+      - name: Debug app startup manually
+        run: |
+          timeout 15 "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" --enable-logging --log-level=0 || echo "App exited with code $?"
+        shell: bash
+      # ─── END DEBUG ──────────────────────────────────────────────
+
       - name: Reinstall dependencies in packaged app
         run: |
           cd "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
@@ -65,3 +86,4 @@ jobs:
           CI: true
           EICIEL_TEST_MODE: '1'
           NODE_OPTIONS: "--max-old-space-size=8192"
+          DEBUG: pw:electron   # 👈 adds Playwright Electron debug logs
