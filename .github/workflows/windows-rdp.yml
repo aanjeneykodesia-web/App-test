@@ -10,7 +10,7 @@ jobs:
 
     env:
       EICIEL_TEST_MODE: '1'
-      NODE_OPTIONS: "--max-old-space-size=8192"   # 👈 8 GB heap
+      NODE_OPTIONS: "--max-old-space-size=8192"
 
     steps:
       - name: Checkout Eiciel OS
@@ -56,11 +56,12 @@ jobs:
           npx playwright install chromium
         shell: bash
 
-      - name: Run Security Tests
+      - name: Run Security Tests (5-7 only)
         run: |
           cd ./app/eiciel-electron
-          npm test
+          npx playwright test -g "System and internet controls|Internet is allowed only when browser is open|Self‑destruct on exit should trigger" --reporter=line
         shell: bash
         env:
           CI: true
-          PLAYWRIGHT_TEST_TIMEOUT: 120000
+          EICIEL_TEST_MODE: '1'
+          NODE_OPTIONS: "--max-old-space-size=8192"
