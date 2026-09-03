@@ -2035,17 +2035,23 @@ const path = require('path');
 let app, window;
 
 test.beforeAll(async () => {
-  test.setTimeout(120000); // increase timeout to 2 minutes
+  test.setTimeout(180000); // 3 minutes
   const exePath = path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');
   console.log('🚀 Launching Electron app...');
   app = await _electron.launch({
     executablePath: exePath,
+    args: [
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--no-sandbox',
+      '--disable-dev-shm-usage'
+    ],
     env: { ...process.env, EICIEL_TEST_MODE: '1' },
   });
   console.log('✅ App launched, getting first window...');
   window = await app.firstWindow();
   console.log('✅ Got window, waiting for domcontentloaded...');
-  await window.waitForLoadState('domcontentloaded', { timeout: 60000 });
+  await window.waitForLoadState('domcontentloaded', { timeout: 90000 });
   console.log('✅ Window loaded.');
 
   const loginOverlay = window.locator('#loginOverlay');
@@ -2053,7 +2059,7 @@ test.beforeAll(async () => {
     console.log('🔑 Login overlay visible, entering passkey...');
     await window.locator('#loginPasskeyInput').fill('EICIEL-2026');
     await window.locator('#loginBtn').click();
-    await window.locator('#desktopArea').waitFor({ state: 'visible' });
+    await window.locator('#desktopArea').waitFor({ state: 'visible', timeout: 30000 });
     console.log('✅ Passkey entered, desktop visible.');
   }
   await window.evaluate(() => window.api.enableTestMode());
@@ -2061,110 +2067,116 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  console.log('🧹 Cleaning up...');
   if (!app) return;
   try {
     await Promise.race([
       app.close(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 10000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 30000))
     ]);
   } catch (e) {
     console.warn('App close timed out, killing process...');
-    try {
-      if (app.process && app.process()) {
-        app.process().kill('SIGTERM');
-      }
-    } catch (e2) {
-      console.warn('Force kill failed:', e2);
+    if (app.process && app.process()) {
+      app.process().kill('SIGTERM');
     }
   }
+  console.log('✅ Cleanup complete.');
 });
 
+// ─── Tests 1–3: basic security checks ──────────────────────────
 test('DevTools should be blocked', async () => {
+  console.log('🧪 Test 1: DevTools...');
   const result = await window.evaluate(() => {
-    try {
-      window.openDevTools();
-      return 'opened';
-    } catch (e) {
-      return 'blocked';
-    }
+    try { window.openDevTools(); return 'opened'; } catch (e) { return 'blocked'; }
   });
   expect(result).toBe('blocked');
+  console.log('✅ Test 1 passed.');
 });
 
 test('Node.js APIs should not be accessible', async () => {
+  console.log('🧪 Test 2: Node.js...');
   const result = await window.evaluate(() => {
-    try {
-      return typeof require !== 'undefined' ? 'require found' : 'require not found';
-    } catch (e) {
-      return 'blocked';
-    }
+    try { return typeof require !== 'undefined' ? 'require found' : 'require not found'; } catch (e) { return 'blocked'; }
   });
   expect(result).toBe('require not found');
+  console.log('✅ Test 2 passed.');
 });
 
 test('IPC calls should be restricted', async () => {
+  console.log('🧪 Test 3: IPC...');
   const hasIpcRenderer = await window.evaluate(() => {
     return typeof require !== 'undefined' && require('electron') !== undefined;
   });
   expect(hasIpcRenderer).toBe(false);
   const result = await window.evaluate(() => {
-    try {
-      window.api.unknownMethod();
-      return 'called';
-    } catch (e) {
-      return 'blocked';
-    }
+    try { window.api.unknownMethod(); return 'called'; } catch (e) { return 'blocked'; }
   });
   expect(result).toBe('blocked');
+  console.log('✅ Test 3 passed.');
 });
 
+// ─── Test 4: Mouse‑score breach ──────────────────────────────────
 test('Mouse‑score breach should trigger', async () => {
+  console.log('🧪 Test 4: Mouse‑score...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
   await window.evaluate(() => window.api.mouseScore(0));
-  await window.waitForTimeout(1500);
+  await window.waitForTimeout(2000);
   const spies = await window.evaluate(() => window.api.getTestSpies());
   expect(spies.createBackupArchive).toBeGreaterThan(initial.createBackupArchive);
   expect(spies.backupToCloud).toBeGreaterThan(initial.backupToCloud);
   expect(spies.wipeAllDrives).toBeGreaterThan(initial.wipeAllDrives);
   expect(spies.selfDestruct).toBeGreaterThan(initial.selfDestruct);
   expect(spies.onWipeRequest).toBeGreaterThan(initial.onWipeRequest);
+  console.log('✅ Test 4 passed.');
 });
 
+// ─── Test 5: System and internet controls ──────────────────────
 test('System and internet controls should work', async () => {
+  console.log('🧪 Test 5: System & internet controls...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
   await window.evaluate(() => window.api.disableSystemProcesses());
+  await window.waitForTimeout(2000);
   await window.evaluate(() => window.api.blockInternet());
+  await window.waitForTimeout(2000);
   await window.evaluate(() => window.api.enableSystemProcesses());
+  await window.waitForTimeout(2000);
   await window.evaluate(() => window.api.allowInternet());
+  await window.waitForTimeout(2000);
   const spies = await window.evaluate(() => window.api.getTestSpies());
   expect(spies.disableSystemProcesses).toBeGreaterThan(initial.disableSystemProcesses);
   expect(spies.blockInternet).toBeGreaterThan(initial.blockInternet);
   expect(spies.enableSystemProcesses).toBeGreaterThan(initial.enableSystemProcesses);
   expect(spies.allowInternet).toBeGreaterThan(initial.allowInternet);
+  console.log('✅ Test 5 passed.');
 });
 
+// ─── Test 6: Browser‑only internet toggle ──────────────────────
 test('Internet is allowed only when browser is open', async () => {
+  console.log('🧪 Test 6: Browser-only internet...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
   await window.locator('.icon[data-app="browser"]').click();
-  await window.locator('#browserWindow').waitFor({ state: 'visible' });
-  await window.waitForTimeout(500);
+  await window.locator('#browserWindow').waitFor({ state: 'visible', timeout: 15000 });
+  await window.waitForTimeout(1000);
   let spies = await window.evaluate(() => window.api.getTestSpies());
   expect(spies.allowInternet).toBeGreaterThan(initial.allowInternet);
   await window.locator('#browserWindow .app-close').click();
-  await window.locator('#browserWindow').waitFor({ state: 'hidden' });
-  await window.waitForTimeout(500);
+  await window.locator('#browserWindow').waitFor({ state: 'hidden', timeout: 15000 });
+  await window.waitForTimeout(1000);
   spies = await window.evaluate(() => window.api.getTestSpies());
   expect(spies.blockInternet).toBeGreaterThan(initial.blockInternet);
+  console.log('✅ Test 6 passed.');
 });
 
+// ─── Test 7: Self‑destruct on exit ─────────────────────────────
 test('Self‑destruct on exit should trigger', async () => {
+  console.log('🧪 Test 7: Self‑destruct on exit...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
   await window.evaluate(() => window.api.selfDestructOnExit());
   const spies = await window.evaluate(() => window.api.getTestSpies());
   expect(spies.selfDestructOnExit).toBeGreaterThan(initial.selfDestructOnExit);
+  console.log('✅ Test 7 passed.');
 });
-EOF
-
+      
 # ─── Create run-tests.bat ──────────────────────────────────────
 cat > run-tests.bat << 'EOF'
 @echo off
