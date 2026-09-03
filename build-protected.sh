@@ -92,6 +92,15 @@ function allowInternet() {
     if (err) console.warn('Failed to allow internet:', err);
   });
 }
+mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+  console.error(`❌ Page load failed: ${errorDescription} (${errorCode})`);
+});
+mainWindow.webContents.on('crashed', () => console.error('❌ Renderer crashed'));
+mainWindow.webContents.on('unresponsive', () => console.error('⚠️ Renderer unresponsive'));
+
+mainWindow.loadFile(htmlPath).catch(err => {
+  console.error('❌ loadFile error:', err);
+});
 
 // ─── Self‑destruct on normal exit ──────────────────────────────
 function scheduleSelfDestructOnExit() {
