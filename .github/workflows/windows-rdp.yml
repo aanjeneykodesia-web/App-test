@@ -76,11 +76,31 @@ jobs:
           dir "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
         shell: pwsh
 
-      - name: Run app with full logging (stderr)
+      - name: Run app and capture stderr/stdout (timeout 15s)
         run: |
-          Write-Host "=== Running app with --enable-logging ==="
-          $output = & "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" --enable-logging --log-level=0 2>&1
-          $output | Out-String
+          Write-Host "=== Running app and capturing stderr/stdout (timeout 15s) ==="
+          $process = Start-Process -FilePath "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" -RedirectStandardError "stderr.txt" -RedirectStandardOutput "stdout.txt" -PassThru -NoNewWindow
+          Start-Sleep -Seconds 15
+          if (!$process.HasExited) { 
+            Write-Host "Process still running, killing..."
+            $process.Kill() 
+          }
+          Write-Host "=== STDOUT ==="
+          Get-Content stdout.txt -ErrorAction SilentlyContinue
+          Write-Host "=== STDERR ==="
+          Get-Content stderr.txt -ErrorAction SilentlyContinue
+        shell: pwsh
+
+      - name: List temp extraction directory
+        run: |
+          $tempDirs = Get-ChildItem $env:TEMP -Filter "eiciel_decrypted_*" | Sort-Object LastWriteTime -Descending
+          if ($tempDirs) {
+            $latest = $tempDirs[0].FullName
+            Write-Host "Latest temp dir: $latest"
+            Get-ChildItem $latest
+          } else {
+            Write-Host "No eiciel_decrypted_ folders found."
+          }
         shell: pwsh
       # ─── END DEBUG ──────────────────────────────────────────────
 
@@ -106,4 +126,4 @@ jobs:
           CI: true
           EICIEL_TEST_MODE: '1'
           NODE_OPTIONS: "--max-old-space-size=8192"
-          DEBUG: pw:electron   # Playwright Electron debug logs
+          DEBUG: pw:electron
