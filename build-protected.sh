@@ -2234,6 +2234,55 @@ test('System and internet controls should work', async () => {
     await window.evaluate(() => window.api.disableSystemProcesses());
     console.log('✅ disableSystemProcesses called');
   } catch (e) { console.error('❌ disableSystemProcesses failed:', e); }
+  console.log('⏳ Waiting 500ms after disable...');
+  await window.waitForTimeout(500);
+  console.log('⏳ Done waiting.');
+
+  try {
+    await window.evaluate(() => window.api.blockInternet());
+    console.log('✅ blockInternet called');
+  } catch (e) { console.error('❌ blockInternet failed:', e); }
+  console.log('⏳ Waiting 500ms after block...');
+  await window.waitForTimeout(500);
+  console.log('⏳ Done waiting.');
+
+  try {
+    await window.evaluate(() => window.api.enableSystemProcesses());
+    console.log('✅ enableSystemProcesses called');
+  } catch (e) { console.error('❌ enableSystemProcesses failed:', e); }
+  console.log('⏳ Waiting 500ms after enable...');
+  await window.waitForTimeout(500);
+  console.log('⏳ Done waiting.');
+
+  try {
+    await window.evaluate(() => window.api.allowInternet());
+    console.log('✅ allowInternet called');
+  } catch (e) { console.error('❌ allowInternet failed:', e); }
+  console.log('⏳ Waiting 500ms after allow...');
+  await window.waitForTimeout(500);
+  console.log('⏳ Done waiting. Now retrieving final spies...');
+
+  let spies;
+  try {
+    spies = await window.evaluate(() => window.api.getTestSpies());
+    console.log('📊 Final spies:', spies);
+  } catch (e) {
+    console.error('❌ Failed to get final spies:', e);
+    throw e;
+  }
+
+  console.log('🔍 Asserting spies...');
+  expect(spies.disableSystemProcesses).toBeGreaterThan(initial.disableSystemProcesses);
+  expect(spies.blockInternet).toBeGreaterThan(initial.blockInternet);
+  expect(spies.enableSystemProcesses).toBeGreaterThan(initial.enableSystemProcesses);
+  expect(spies.allowInternet).toBeGreaterThan(initial.allowInternet);
+  console.log('✅ Test 5 passed.');
+});
+
+  try {
+    await window.evaluate(() => window.api.disableSystemProcesses());
+    console.log('✅ disableSystemProcesses called');
+  } catch (e) { console.error('❌ disableSystemProcesses failed:', e); }
   await window.waitForTimeout(2000);
 
   try {
