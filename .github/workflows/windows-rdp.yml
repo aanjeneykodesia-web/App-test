@@ -8,10 +8,6 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
 
-    env:
-      EICIEL_TEST_MODE: '1'
-      NODE_OPTIONS: "--max-old-space-size=8192"
-
     steps:
       - name: Checkout Eiciel OS
         uses: actions/checkout@v4
@@ -25,6 +21,7 @@ jobs:
         with:
           node-version: '18'
 
+      # ─── Cache node_modules ──────────────────────────────────────
       - name: Cache node_modules
         id: cache-node
         uses: actions/cache@v3
@@ -36,6 +33,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-node-
 
+      # ─── Build the app (includes full test file creation) ──────
       - name: Build Eiciel OS
         run: |
           cd ./app
@@ -43,87 +41,26 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── DEBUGGING STEPS ──────────────────────────────────────────
-      - name: Check if source.enc exists
-        run: |
-          if (Test-Path "D:/data/EicielOS/EicielOS-win32-x64/resources/app/source.enc") {
-            Write-Host "✅ source.enc exists."
-          } else {
-            Write-Host "❌ source.enc is missing!"
-            exit 1
-          }
-        shell: pwsh
-
-      - name: Show loader log (if exists)
-        run: |
-          if (Test-Path "$env:APPDATA\eiciel_loader.log") {
-            Write-Host "=== Loader log from APPDATA ==="
-            Get-Content "$env:APPDATA\eiciel_loader.log"
-          } else {
-            Write-Host "Loader log not found in APPDATA."
-          }
-          if (Test-Path "$env:TEMP\eiciel_loader.log") {
-            Write-Host "=== Loader log from TEMP ==="
-            Get-Content "$env:TEMP\eiciel_loader.log"
-          } else {
-            Write-Host "Loader log not found in TEMP."
-          }
-        shell: pwsh
-
-      - name: List packaged app files
-        run: |
-          Write-Host "=== Contents of resources/app ==="
-          dir "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
-        shell: pwsh
-
-      - name: Run app and capture stderr/stdout (timeout 15s)
-        run: |
-          Write-Host "=== Running app and capturing stderr/stdout (timeout 15s) ==="
-          $process = Start-Process -FilePath "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" -RedirectStandardError "stderr.txt" -RedirectStandardOutput "stdout.txt" -PassThru -NoNewWindow
-          Start-Sleep -Seconds 15
-          if (!$process.HasExited) { 
-            Write-Host "Process still running, killing..."
-            $process.Kill() 
-          }
-          Write-Host "=== STDOUT ==="
-          Get-Content stdout.txt -ErrorAction SilentlyContinue
-          Write-Host "=== STDERR ==="
-          Get-Content stderr.txt -ErrorAction SilentlyContinue
-        shell: pwsh
-
-      - name: List temp extraction directory
-        run: |
-          $tempDirs = Get-ChildItem $env:TEMP -Filter "eiciel_decrypted_*" | Sort-Object LastWriteTime -Descending
-          if ($tempDirs) {
-            $latest = $tempDirs[0].FullName
-            Write-Host "Latest temp dir: $latest"
-            Get-ChildItem $latest
-          } else {
-            Write-Host "No eiciel_decrypted_ folders found."
-          }
-        shell: pwsh
-      # ─── END DEBUG ──────────────────────────────────────────────
-
-      - name: Reinstall dependencies in packaged app
-        run: |
-          cd "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
-          npm install --production --no-fund --no-audit
-        shell: bash
-
-      - name: Install Playwright browsers (if cache missed)
+      # ─── Install Playwright browsers (if cache missed) ─────────
+      - name: Install Playwright browsers
         if: steps.cache-node.outputs.cache-hit != 'true'
         run: |
           cd ./app/eiciel-electron
           npx playwright install chromium
         shell: bash
 
-      - name: Run Security Tests (5-7 only)
+      # ─── Debug: list test files (optional) ──────────────────────
+      - name: List test files
         run: |
           cd ./app/eiciel-electron
-          npx playwright test -g "System and internet controls|Internet is allowed only when browser is open|Self‑destruct on exit should trigger" --reporter=line
+          dir tests
+        shell: bash
+
+      # ─── Run the security tests (all 7) ────────────────────────
+      - name: Run Security Tests
+        run: |
+          cd ./app/eiciel-electron
+          npm test
         shell: bash
         env:
           CI: true
-          EICIEL_TEST_MODE: '1'
-          NODE_OPTIONS: "--max-old-space-size=8192"
-          DEBUG: pw:electron
