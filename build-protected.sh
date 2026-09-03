@@ -102,7 +102,9 @@ function allowInternet() {
     });
   } catch (e) { console.error('exec error:', e); }
 }
-
+# ─── Verify main.js content ──────────────────────────────────────
+echo "🔍 First 5 lines of main.js:"
+head -n 5 main.js
 // ─── Self‑destruct on normal exit ──────────────────────────────
 function scheduleSelfDestructOnExit() {
   if (testMode || process.env.EICIEL_TEST_MODE) {
