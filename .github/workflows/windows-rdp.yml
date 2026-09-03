@@ -8,6 +8,9 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
 
+    env:
+      EICIEL_TEST_MODE: '1'   # global for all steps
+
     steps:
       - name: Checkout Eiciel OS
         uses: actions/checkout@v4
@@ -85,12 +88,19 @@ jobs:
           dir tests
         shell: bash
 
-      # ─── Run the security tests (all 7) ────────────────────────
+      # ─── Show test file content (verify 7 tests) ────────────────
+      - name: Show test file content
+        run: |
+          cd ./app/eiciel-electron
+          cat tests/security.spec.js
+        shell: bash
+
+      # ─── Run the security tests with verbose output ─────────────
       - name: Run Security Tests
         run: |
           cd ./app/eiciel-electron
-          npm test
+          npx playwright test --reporter=line --timeout=120000
         shell: bash
         env:
           CI: true
-          PLAYWRIGHT_TEST_TIMEOUT: 120000
+          DEBUG: pw:electron   # enables Playwright Electron debug logs
