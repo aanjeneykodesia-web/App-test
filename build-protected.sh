@@ -2031,8 +2031,9 @@ else
 fi
 
 # ─── Create the final test file with all 7 tests ──────────────
+# ─── Create the final test file with all 7 tests ──────────────
 echo "📝 Creating the complete test suite with 7 tests..."
-mkdir -p tests
+mkdir -p tests   # <-- ensure the directory exists
 cat > tests/security.spec.js << 'EOF'
 const { test, expect, _electron } = require('@playwright/test');
 const path = require('path');
