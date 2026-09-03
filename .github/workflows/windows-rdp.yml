@@ -43,25 +43,45 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      # ─── DEBUG STEPS ────────────────────────────────────────────
-      - name: Show loader log
+      # ─── DEBUGGING STEPS ──────────────────────────────────────────
+      - name: Check if source.enc exists
+        run: |
+          if (Test-Path "D:/data/EicielOS/EicielOS-win32-x64/resources/app/source.enc") {
+            Write-Host "✅ source.enc exists."
+          } else {
+            Write-Host "❌ source.enc is missing!"
+            exit 1
+          }
+        shell: pwsh
+
+      - name: Show loader log (if exists)
         run: |
           if (Test-Path "$env:APPDATA\eiciel_loader.log") {
+            Write-Host "=== Loader log from APPDATA ==="
             Get-Content "$env:APPDATA\eiciel_loader.log"
           } else {
-            Write-Host "Loader log not found."
+            Write-Host "Loader log not found in APPDATA."
+          }
+          if (Test-Path "$env:TEMP\eiciel_loader.log") {
+            Write-Host "=== Loader log from TEMP ==="
+            Get-Content "$env:TEMP\eiciel_loader.log"
+          } else {
+            Write-Host "Loader log not found in TEMP."
           }
         shell: pwsh
 
       - name: List packaged app files
         run: |
+          Write-Host "=== Contents of resources/app ==="
           dir "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
-        shell: bash
+        shell: pwsh
 
-      - name: Debug app startup manually
+      - name: Run app with full logging (stderr)
         run: |
-          timeout 15 "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" --enable-logging --log-level=0 || echo "App exited with code $?"
-        shell: bash
+          Write-Host "=== Running app with --enable-logging ==="
+          $output = & "D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe" --enable-logging --log-level=0 2>&1
+          $output | Out-String
+        shell: pwsh
       # ─── END DEBUG ──────────────────────────────────────────────
 
       - name: Reinstall dependencies in packaged app
@@ -86,4 +106,4 @@ jobs:
           CI: true
           EICIEL_TEST_MODE: '1'
           NODE_OPTIONS: "--max-old-space-size=8192"
-          DEBUG: pw:electron   # 👈 adds Playwright Electron debug logs
+          DEBUG: pw:electron   # Playwright Electron debug logs
