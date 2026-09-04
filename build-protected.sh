@@ -2158,40 +2158,34 @@ test.afterAll(async () => {
   }
   console.log('✅ Cleanup complete.');
 });
-// ... (everything before) ...
 
-test.afterAll(async () => {
-  console.log('🧹 Cleaning up...');
-  if (!app) return;
-  try {
-    await Promise.race([
-      app.close(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 30000))
-    ]);
-  } catch (e) {
-    console.warn('App close timed out, killing process...');
-    if (app.process && app.process()) {
-      app.process().kill('SIGTERM');
-    }
-  }
-  console.log('✅ Cleanup complete.');
-});
-
-// ─── AFTER EACH TEST: take a screenshot ──────────────────────────
+// ─── Safe screenshot after each test ──────────────────────────────
 test.afterEach(async () => {
-  if (window) {
-    try {
-      const screenshotPath = `screenshot-${Date.now()}.png`;
-      await window.screenshot({ path: screenshotPath });
-      console.log(`📸 Screenshot saved: ${screenshotPath}`);
-    } catch (e) {
-      console.error('❌ Screenshot failed:', e);
-    }
+  if (!window) {
+    console.warn('⚠️ No window available for screenshot.');
+    return;
+  }
+
+  // Check if the window is still open
+  try {
+    // A simple evaluate to check if the page is alive
+    await window.evaluate(() => true);
+  } catch (e) {
+    console.warn('⚠️ Window is closed or unresponsive, skipping screenshot.');
+    return;
+  }
+
+  try {
+    const screenshotPath = `screenshot-${Date.now()}.png`;
+    // Use a short timeout (2 seconds) to avoid hanging
+    await window.screenshot({ path: screenshotPath, timeout: 2000 });
+    console.log(`📸 Screenshot saved: ${screenshotPath}`);
+  } catch (e) {
+    console.error('❌ Screenshot failed (non‑fatal):', e.message);
   }
 });
 
-// ─── Tests 1–7 (keep the existing ones) ────────────────────────
-// ... all 7 tests ...
+// ─── Tests 1–7 (unchanged) ────────────────────────────────────────
 test('DevTools should be blocked', async () => {
   console.log('🧪 Test 1: DevTools...');
   const result = await window.evaluate(() => {
@@ -2223,7 +2217,7 @@ test('IPC calls should be restricted', async () => {
   console.log('✅ Test 3 passed.');
 });
 
-// ─── Test 4: Mouse‑score breach with spy print ──────────────
+// ─── Test 4: Mouse‑score breach ──────────────────────────────────
 test('Mouse‑score breach should trigger', async () => {
   console.log('🧪 Test 4: Mouse‑score...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
@@ -2233,7 +2227,7 @@ test('Mouse‑score breach should trigger', async () => {
   await window.waitForTimeout(2000);
 
   const spies = await window.evaluate(() => window.api.getTestSpies());
-  console.log('📊 Spies after Test 4:', spies);   // 👈 Added this line
+  console.log('📊 Spies after Test 4:', spies);
 
   expect(spies.createBackupArchive).toBeGreaterThan(initial.createBackupArchive);
   expect(spies.backupToCloud).toBeGreaterThan(initial.backupToCloud);
@@ -2243,7 +2237,7 @@ test('Mouse‑score breach should trigger', async () => {
   console.log('✅ Test 4 passed.');
 });
 
-// ─── Test 5: System and internet controls ────────────────────
+// ─── Test 5: System and internet controls ────────────────────────
 test('System and internet controls should work', async () => {
   test.setTimeout(60000);
   console.log('🧪 Test 5: System & internet controls...');
@@ -2290,6 +2284,7 @@ test('System and internet controls should work', async () => {
   console.log('✅ Test 5 passed.');
 });
 
+// ─── Test 6: Browser‑only internet ──────────────────────────────
 test('Internet is allowed only when browser is open', async () => {
   test.setTimeout(60000);
   console.log('🧪 Test 6: Browser-only internet...');
@@ -2307,6 +2302,7 @@ test('Internet is allowed only when browser is open', async () => {
   console.log('✅ Test 6 passed.');
 });
 
+// ─── Test 7: Self‑destruct on exit ──────────────────────────────
 test('Self‑destruct on exit should trigger', async () => {
   console.log('🧪 Test 7: Self‑destruct on exit...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
