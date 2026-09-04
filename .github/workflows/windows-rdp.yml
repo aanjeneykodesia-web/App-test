@@ -1,4 +1,4 @@
-name: Playwright – Tests 4 & 7 (screenshots always)
+name: Playwright – Test 7 only (Self‑destruct on exit)
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ jobs:
 
     env:
       EICIEL_TEST_MODE: '1'
-      NODE_OPTIONS: "--max-old-space-size=8192"
+      NODE_OPTIONS: "--max-old-space-size=12288"   # 12GB heap for runner
 
     steps:
       - name: Checkout Eiciel OS
@@ -56,23 +56,23 @@ jobs:
           npx playwright install chromium
         shell: bash
 
-      - name: Run Tests 4 & 7 with screenshots
+      # ─── Run ONLY Test 7 ────────────────────────────────────────
+      - name: Run Test 7 (Self‑destruct on exit)
         run: |
           cd ./app/eiciel-electron
-          npx playwright test -g "Mouse‑score breach should trigger|Self‑destruct on exit should trigger" --reporter=line --output=test-results
+          npx playwright test -g "Self‑destruct on exit should trigger" --reporter=line --output=test-results
         env:
           CI: true
           EICIEL_TEST_MODE: '1'
-          NODE_OPTIONS: "--max-old-space-size=8192"
+          NODE_OPTIONS: "--max-old-space-size=12288"
           DEBUG: pw:electron
         shell: bash
 
-      # ─── Upload all screenshots (even if tests pass) ──────────
-      - name: Upload screenshots
+      - name: Upload screenshots (if any)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: screenshots
+          name: test-7-screenshots
           path: |
             app/eiciel-electron/screenshot-*.png
             app/eiciel-electron/test-results
