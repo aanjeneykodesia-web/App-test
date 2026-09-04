@@ -1,4 +1,4 @@
-name: Playwright – Tests 1–4
+name: Playwright – Tests 7 & 8
 
 on:
   workflow_dispatch:
@@ -56,11 +56,11 @@ jobs:
           npx playwright install chromium
         shell: bash
 
-      # ─── Run only tests 1–4 ──────────────────────────────────────
-      - name: Run Tests 1–4
+      # ─── Run only tests 7 and 8 ──────────────────────────────────
+      - name: Run Tests 7 & 8
         run: |
           cd ./app/eiciel-electron
-          npx playwright test -g "DevTools should be blocked|Node.js APIs should not be accessible|IPC calls should be restricted|Mouse‑score breach should trigger" --reporter=line --output=test-results
+          npx playwright test -g "Self‑destruct on exit should trigger|System shutdown on breach should trigger" --reporter=line --output=test-results
         env:
           CI: true
           EICIEL_TEST_MODE: '1'
@@ -72,7 +72,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-1-4-artifacts
+          name: test-7-8-artifacts
           path: |
             app/eiciel-electron/screenshot-*.png
             app/eiciel-electron/test-results
