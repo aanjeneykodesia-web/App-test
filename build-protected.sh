@@ -2158,7 +2158,40 @@ test.afterAll(async () => {
   }
   console.log('✅ Cleanup complete.');
 });
+// ... (everything before) ...
 
+test.afterAll(async () => {
+  console.log('🧹 Cleaning up...');
+  if (!app) return;
+  try {
+    await Promise.race([
+      app.close(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Close timeout')), 30000))
+    ]);
+  } catch (e) {
+    console.warn('App close timed out, killing process...');
+    if (app.process && app.process()) {
+      app.process().kill('SIGTERM');
+    }
+  }
+  console.log('✅ Cleanup complete.');
+});
+
+// ─── AFTER EACH TEST: take a screenshot ──────────────────────────
+test.afterEach(async () => {
+  if (window) {
+    try {
+      const screenshotPath = `screenshot-${Date.now()}.png`;
+      await window.screenshot({ path: screenshotPath });
+      console.log(`📸 Screenshot saved: ${screenshotPath}`);
+    } catch (e) {
+      console.error('❌ Screenshot failed:', e);
+    }
+  }
+});
+
+// ─── Tests 1–7 (keep the existing ones) ────────────────────────
+// ... all 7 tests ...
 test('DevTools should be blocked', async () => {
   console.log('🧪 Test 1: DevTools...');
   const result = await window.evaluate(() => {
