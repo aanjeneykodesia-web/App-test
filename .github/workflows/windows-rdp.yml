@@ -1,79 +1,40 @@
-name: Playwright – Test 6 only (Browser-only internet)
+name: Playwright Tests
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
   test:
     runs-on: windows-latest
-    timeout-minutes: 30
-
-    env:
-      EICIEL_TEST_MODE: '1'
-      NODE_OPTIONS: "--max-old-space-size=12288"
 
     steps:
-      - name: Checkout Eiciel OS
+      - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          repository: aanjeneykodesia-web/App-test
-          path: app
-          token: ${{ secrets.PAT_TOKEN || github.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: 18
+          cache: 'npm'
 
-      - name: Cache node_modules
-        id: cache-node
-        uses: actions/cache@v3
-        with:
-          path: |
-            app/eiciel-electron/node_modules
-            ~/.cache/ms-playwright
-          key: ${{ runner.os }}-node-${{ hashFiles('app/eiciel-electron/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Build Eiciel OS
+      - name: Build the protected app
+        # This runs your build script (which creates the .exe and test files)
         run: |
-          cd ./app
-          chmod +x build-protected.sh
           bash build-protected.sh
         shell: bash
 
-      - name: Reinstall dependencies in packaged app
-        run: |
-          cd "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
-          npm install --production --no-fund --no-audit
-        shell: bash
+      - name: Install Playwright browsers
+        run: npx playwright install
 
-      - name: Install Playwright browsers (if cache missed)
-        if: steps.cache-node.outputs.cache-hit != 'true'
-        run: |
-          cd ./app/eiciel-electron
-          npx playwright install chromium
-        shell: bash
-
-      # ─── Run only Test 6 ──────────────────────────────────────────
-      - name: Run Test 6
-        run: |
-          cd ./app/eiciel-electron
-          npx playwright test -g "Internet is allowed only when browser is open" --reporter=line --output=test-results
+      - name: Run tests
+        run: npm test
         env:
-          CI: true
-          EICIEL_TEST_MODE: '1'
-          NODE_OPTIONS: "--max-old-space-size=12288"
-          DEBUG: pw:electron
-        shell: bash
-
-      - name: Upload test artifacts (screenshots)
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-6-artifacts
-          path: |
-            app/eiciel-electron/screenshot-*.png
-            app/eiciel-electron/test-results
-          if-no-files-found: ignore
+          EICIEL_TEST_MODE: 1
+          # Tell the test where to find the .exe (adjust path if needed)
+          EICIEL_EXE_PATH: D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe
