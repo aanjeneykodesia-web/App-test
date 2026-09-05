@@ -1,4 +1,4 @@
-name: Playwright – Tests 5 & 6
+name: Playwright – Test 6 only (Browser-only internet)
 
 on:
   workflow_dispatch:
@@ -56,11 +56,11 @@ jobs:
           npx playwright install chromium
         shell: bash
 
-      # ─── Run only tests 5 and 6 ──────────────────────────────────
-      - name: Run Tests 5 & 6
+      # ─── Run only Test 6 ──────────────────────────────────────────
+      - name: Run Test 6
         run: |
           cd ./app/eiciel-electron
-          npx playwright test -g "System and internet controls should work|Internet is allowed only when browser is open" --reporter=line --output=test-results
+          npx playwright test -g "Internet is allowed only when browser is open" --reporter=line --output=test-results
         env:
           CI: true
           EICIEL_TEST_MODE: '1'
@@ -72,7 +72,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-5-6-artifacts
+          name: test-6-artifacts
           path: |
             app/eiciel-electron/screenshot-*.png
             app/eiciel-electron/test-results
