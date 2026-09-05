@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [ main, master ]
 
+# Allow using Node 20 (even though deprecated) – you can remove this line once you migrate to Node 22+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
 jobs:
   test:
     runs-on: windows-latest
@@ -14,27 +18,35 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js (20)
         uses: actions/setup-node@v4
         with:
-          node-version: 18
-          cache: 'npm'
+          node-version: 20
+          # cache: 'npm'   # cache requires a lockfile – we'll handle it manually
 
-      - name: Install dependencies
-        run: npm ci
+      # Generate a lockfile if not present, and install dependencies
+      - name: Install dependencies (with lockfile creation)
+        run: |
+          npm install --package-lock-only
+          npm ci
+        shell: bash
 
       - name: Build the protected app
-        # This runs your build script (which creates the .exe and test files)
-        run: |
-          bash build-protected.sh
-        shell: bash
+        run: bash build-protected.sh
 
       - name: Install Playwright browsers
         run: npx playwright install
 
-      - name: Run tests
+      - name: Run Playwright tests
         run: npm test
         env:
           EICIEL_TEST_MODE: 1
-          # Tell the test where to find the .exe (adjust path if needed)
+          # Override the .exe path – adjust if your build outputs elsewhere
           EICIEL_EXE_PATH: D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe
+
+      - name: Upload screenshots (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-screenshots
+          path: screenshot-*.png
