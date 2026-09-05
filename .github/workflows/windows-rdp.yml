@@ -1,22 +1,24 @@
-name: Build Eiciel OS & Upload Artifact
+name: Playwright – Tests 5 & 6
 
 on:
   workflow_dispatch:
 
 jobs:
-  build:
+  test:
     runs-on: windows-latest
     timeout-minutes: 30
 
     env:
-      EICIEL_TEST_MODE: '0'   # Build in production mode (no test spies)
-      NODE_OPTIONS: "--max-old-space-size=8192"
+      EICIEL_TEST_MODE: '1'
+      NODE_OPTIONS: "--max-old-space-size=12288"
 
     steps:
-      - name: Checkout repository
+      - name: Checkout Eiciel OS
         uses: actions/checkout@v4
         with:
+          repository: aanjeneykodesia-web/App-test
           path: app
+          token: ${{ secrets.PAT_TOKEN || github.token }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -41,14 +43,37 @@ jobs:
           bash build-protected.sh
         shell: bash
 
-      - name: List packaged app contents (debug)
+      - name: Reinstall dependencies in packaged app
         run: |
-          dir "D:/data/EicielOS/EicielOS-win32-x64"
-        shell: pwsh
+          cd "D:/data/EicielOS/EicielOS-win32-x64/resources/app"
+          npm install --production --no-fund --no-audit
+        shell: bash
 
-      - name: Upload packaged app as artifact
+      - name: Install Playwright browsers (if cache missed)
+        if: steps.cache-node.outputs.cache-hit != 'true'
+        run: |
+          cd ./app/eiciel-electron
+          npx playwright install chromium
+        shell: bash
+
+      # ─── Run only tests 5 and 6 ──────────────────────────────────
+      - name: Run Tests 5 & 6
+        run: |
+          cd ./app/eiciel-electron
+          npx playwright test -g "System and internet controls should work|Internet is allowed only when browser is open" --reporter=line --output=test-results
+        env:
+          CI: true
+          EICIEL_TEST_MODE: '1'
+          NODE_OPTIONS: "--max-old-space-size=12288"
+          DEBUG: pw:electron
+        shell: bash
+
+      - name: Upload test artifacts (screenshots)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EicielOS-build
-          path: D:/data/EicielOS/EicielOS-win32-x64
-          if-no-files-found: error
+          name: test-5-6-artifacts
+          path: |
+            app/eiciel-electron/screenshot-*.png
+            app/eiciel-electron/test-results
+          if-no-files-found: ignore
