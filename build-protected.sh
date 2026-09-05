@@ -2271,16 +2271,22 @@ test('System and internet controls should work', async () => {
   console.log('✅ Test 5 passed.');
 });
 
-// ─── Test 6: Browser‑only internet ──────────────────────────────
+// ─── Test 6: Browser‑only internet (FIXED) ──────────────────────
 test('Internet is allowed only when browser is open', async () => {
   test.setTimeout(60000);
   console.log('🧪 Test 6: Browser-only internet...');
   const initial = await window.evaluate(() => window.api.getTestSpies());
-  await window.locator('.icon[data-app="browser"]').click();
+
+  // ─── Wait for the browser icon to be ready ────────────────────
+  const browserIcon = window.locator('.icon[data-app="browser"]');
+  await browserIcon.waitFor({ state: 'visible', timeout: 30000 });
+  await browserIcon.click();
+
   await window.locator('#browserWindow').waitFor({ state: 'visible', timeout: 15000 });
   await window.waitForTimeout(1000);
   let spies = await window.evaluate(() => window.api.getTestSpies());
   expect(spies.allowInternet).toBeGreaterThan(initial.allowInternet);
+
   await window.locator('#browserWindow .app-close').click();
   await window.locator('#browserWindow').waitFor({ state: 'hidden', timeout: 15000 });
   await window.waitForTimeout(1000);
