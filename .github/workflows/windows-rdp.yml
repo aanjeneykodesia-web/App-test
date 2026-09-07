@@ -1,4 +1,4 @@
-name: Playwright Tests
+name: Build and Test Eiciel OS
 
 on:
   push:
@@ -6,51 +6,58 @@ on:
   pull_request:
     branches: [ main, master ]
 
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
-
 jobs:
-  test:
+  build-and-test:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '18'
+          cache: 'npm'
 
-      - name: Install dependencies (create lockfile)
+      - name: Install dependencies
+        run: npm install
+
+      # ─── Create a fake D: drive pointing to a temp folder ──────
+      - name: Create D: drive mapping
+        shell: pwsh
         run: |
-          npm install --package-lock-only
-          npm ci
+          # Create a folder on C: that will act as the root for D:
+          $targetFolder = "C:\build_data"
+          New-Item -ItemType Directory -Force -Path $targetFolder
+          # Map D: to that folder (subst)
+          subst D: $targetFolder
 
-      - name: Build the protected app
-        run: bash build-protected.sh
-
-      # ─── FIX: Remove conflicting test files ──────────────────
-      - name: Remove conflicting test files
-        run: |
-          rm -f security-attacks.spec.js
-          rm -f tests/security-attacks.spec.js
-          echo "✅ Only tests/security.spec.js remains:"
-          ls -la tests/
+      - name: Build Eiciel OS
         shell: bash
+        run: |
+          # Make the build script executable
+          chmod +x deepseek_bash_20260907_a588e2.sh
+          # Run it – it will output to D:/data/EicielOS as per package.json
+          bash deepseek_bash_20260907_a588e2.sh
 
       - name: Install Playwright browsers
-        run: npx playwright install
+        run: npx playwright install --with-deps
 
       - name: Run Playwright tests
         run: npm test
         env:
           EICIEL_TEST_MODE: 1
-          EICIEL_EXE_PATH: D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe
 
-      - name: Upload screenshots (if any)
-        if: always()
+      - name: Upload built executable
         uses: actions/upload-artifact@v4
         with:
-          name: test-screenshots
-          path: screenshot-*.png
+          name: EicielOS-win32-x64
+          # This path matches the one in package.json
+          path: D:/data/EicielOS/EicielOS-win32-x64/
+
+      # ─── (Optional) Clean up the D: mapping ──────────────────
+      - name: Remove D: drive mapping
+        if: always()
+        shell: pwsh
+        run: subst D: /D
