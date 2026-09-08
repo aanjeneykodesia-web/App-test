@@ -29,53 +29,35 @@ jobs:
           Remove-Item -Force -Recurse -ErrorAction SilentlyContinue tests
         shell: pwsh
 
-      # Patch the build script to use ./dist instead of D:/data/EicielOS
+      # Patch the build script:
+      # 1. Change all hardcoded D:/data paths to ./dist
+      # 2. Replace the test file's exePath with environment variable
       - name: Patch build script
         run: |
-          $content = Get-Content build-protected.sh -Raw
-          # Replace all occurrences of D:/data/EicielOS with ./dist
+          $file = "build-protected.sh"
+          $content = Get-Content $file -Raw
+          # Change all D:/data/EicielOS to ./dist
           $content = $content -replace 'D:/data/EicielOS', './dist'
-          # Also fix the APP_DIR path to use the correct relative path
-          $content = $content -replace 'APP_DIR="\./dist/EicielOS-win32-x64/resources/app"', 'APP_DIR="./dist/EicielOS-win32-x64/resources/app"'
-          Set-Content build-protected.sh $content
-          # Print the patched script for debugging
-          Write-Host "Patched build script:"
-          Get-Content build-protected.sh
+          # Replace the hardcoded exePath in the test file generation with env var
+          $content = $content -replace "const exePath = path.join\('\./dist', 'EicielOS-win32-x64', 'EicielOS.exe'\);", "const exePath = process.env.EICIEL_EXE_PATH || path.join(__dirname, 'dist', 'EicielOS-win32-x64', 'EicielOS.exe');"
+          Set-Content $file $content
+          # Show the patched test file section for debugging
+          Write-Host "Patched test file line:"
+          Select-String -Path $file -Pattern "exePath" -Context 0,0
         shell: pwsh
 
-      # Run the build script with verbose output (set -x)
+      # Now run the build script (it will output to ./dist inside eiciel-electron)
       - name: Build protected app
-        run: |
-          bash -x build-protected.sh 2>&1 | tee build.log
-          # If the build fails, we still want to see the log
-          if [ $? -ne 0 ]; then
-            echo "Build failed. See logs above."
-            exit 1
-          fi
+        run: bash build-protected.sh
         shell: bash
 
-      # Debug: list files after build to verify test file exists
-      - name: List files after build
-        run: |
-          Get-ChildItem -Recurse -Force eiciel-electron
-        shell: pwsh
-
-      # If the test file is still missing, we fail early
-      - name: Verify test file exists
+      # Verify the test file exists
+      - name: Verify test file
         run: |
           if (-not (Test-Path "eiciel-electron/tests/security.spec.js")) {
-            Write-Error "Test file not found! Build likely failed."
+            Write-Error "Test file not found!"
             exit 1
           }
-        shell: pwsh
-
-      # Patch the test file to use EICIEL_EXE_PATH environment variable
-      - name: Patch test file for environment variable
-        run: |
-          $file = "eiciel-electron/tests/security.spec.js"
-          $content = Get-Content $file -Raw
-          $newContent = $content -replace "const exePath = path.join\('\./dist', 'EicielOS-win32-x64', 'EicielOS.exe'\);", "const exePath = process.env.EICIEL_EXE_PATH || path.join('.', 'dist', 'EicielOS-win32-x64', 'EicielOS.exe');"
-          Set-Content $file $newContent
         shell: pwsh
 
       # Install Playwright browsers inside eiciel-electron
@@ -100,7 +82,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: build-and-test-artifacts
+          name: test-artifacts
           path: |
             eiciel-electron/screenshot-*.png
             build.log
