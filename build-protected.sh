@@ -14,7 +14,7 @@ cat > package.json << 'EOF'
   "main": "loader.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-packager . EicielOS --platform=win32 --arch=x64 --out=D:/data/EicielOS --overwrite --no-prune",
+    "build": "electron-packager . EicielOS --platform=win32 --arch=x64 --out=./dist --overwrite --no-prune",
     "test": "cross-env EICIEL_TEST_MODE=1 npx playwright test"
   },
   "dependencies": {
@@ -31,6 +31,8 @@ cat > package.json << 'EOF'
   }
 }
 EOF
+
+
 
 # ─── main.js (clean, automatic, no password, no execScript) ──
 cat > main.js << 'EOF'
