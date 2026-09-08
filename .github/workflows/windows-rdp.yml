@@ -1,4 +1,4 @@
-name: Playwright Tests
+name: Playwright Tests (9 tests)
 
 on:
   push:
@@ -7,6 +7,7 @@ on:
     branches: [ main, master ]
 
 env:
+  # Allow using Node 20 (temporary fix for deprecation warning)
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
@@ -22,32 +23,50 @@ jobs:
         with:
           node-version: 20
 
-      - name: Install dependencies (create lockfile)
+      # Generate a lockfile if missing, then install dependencies
+      - name: Install dependencies
         run: |
           npm install --package-lock-only
           npm ci
-      - name: Build the protected app
-        run: bash build-protected.sh
 
-      # ─── FIX: Remove conflicting test files ──────────────────
+      # Remove any conflicting test files (e.g., ES module ones)
       - name: Remove conflicting test files
         run: |
-          rm -f security-attacks.spec.js
-          rm -f tests/security-attacks.spec.js
-          echo "✅ Only tests/security.spec.js remains:"
-          ls -la tests/
+          Remove-Item -Force -ErrorAction SilentlyContinue security-attacks.spec.js
+          Remove-Item -Force -ErrorAction SilentlyContinue tests/security-attacks.spec.js
+        shell: pwsh
+
+      # Build the protected app – we temporarily change the output path to ./dist
+      - name: Build protected app
+        run: |
+          # Change the build output from D:/data/EicielOS to ./dist
+          (Get-Content package.json) -replace '"out":"D:/data/EicielOS"', '"out":"./dist"' | Set-Content package.json
+          bash build-protected.sh
         shell: bash
 
+      # Modify the test file to use the environment variable for the exe path
+      - name: Patch test file to use EICIEL_EXE_PATH
+        run: |
+          $file = "tests/security.spec.js"
+          $content = Get-Content $file -Raw
+          # Replace the hardcoded exePath with one that reads from env
+          $newContent = $content -replace "const exePath = path.join\('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe'\);", "const exePath = process.env.EICIEL_EXE_PATH || path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');"
+          Set-Content $file $newContent
+        shell: pwsh
+
+      # Install Playwright browsers (for Electron testing)
       - name: Install Playwright browsers
         run: npx playwright install
 
+      # Run the tests with the correct environment variable
       - name: Run Playwright tests
         run: npm test
         env:
           EICIEL_TEST_MODE: 1
-          EICIEL_EXE_PATH: D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe
+          EICIEL_EXE_PATH: ./dist/EicielOS-win32-x64/EicielOS.exe
 
-      - name: Upload screenshots (if any)
+      # Upload screenshots (if any) as artifacts
+      - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
