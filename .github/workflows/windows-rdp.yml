@@ -29,43 +29,37 @@ jobs:
           Remove-Item -Force -Recurse -ErrorAction SilentlyContinue tests
         shell: pwsh
 
-      # Patch the build script to use ./dist and environment variable in test file
-      - name: Patch build script
+      # Patch the build script to change output to ./dist
+      - name: Patch build script output path
         run: |
           $file = "build-protected.sh"
-          $content = Get-Content $file -Raw
-          # Change all D:/data/EicielOS to ./dist
-          $content = $content -replace 'D:/data/EicielOS', './dist'
-          # Replace the hardcoded exePath line inside the test file generation
-          $content = $content -replace "const exePath = path.join\('\./dist', 'EicielOS-win32-x64', 'EicielOS.exe'\);", "const exePath = process.env.EICIEL_EXE_PATH || path.join(__dirname, '..', 'dist', 'EicielOS-win32-x64', 'EicielOS.exe');"
-          Set-Content $file $content
+          (Get-Content $file) -replace 'D:/data/EicielOS', './dist' | Set-Content $file
         shell: pwsh
 
-      # Build the protected app
+      # Build the protected app (outputs to eiciel-electron/dist)
       - name: Build protected app
         run: bash build-protected.sh
         shell: bash
 
-      # Double‑patch the generated test file (in case the build script patch didn't work)
-      - name: Patch test file after build
-        run: |
-          $file = "eiciel-electron/tests/security.spec.js"
-          if (Test-Path $file) {
-            $content = Get-Content $file -Raw
-            # Replace the hardcoded exePath with environment variable
-            $newContent = $content -replace "const exePath = path.join\('\./dist', 'EicielOS-win32-x64', 'EicielOS.exe'\);", "const exePath = process.env.EICIEL_EXE_PATH || path.join(__dirname, '..', 'dist', 'EicielOS-win32-x64', 'EicielOS.exe');"
-            Set-Content $file $newContent
-            Write-Host "Test file patched successfully."
-          } else {
-            Write-Error "Test file not found after build!"
-            exit 1
-          }
+      # List the dist folder to confirm the .exe exists
+      - name: List dist folder
+        run: Get-ChildItem -Recurse eiciel-electron/dist
         shell: pwsh
 
-      # Verify the test file now uses the environment variable
-      - name: Verify test file content
+      # Patch the test file directly: replace the hardcoded path with environment variable
+      - name: Patch test file to use EICIEL_EXE_PATH
         run: |
-          Select-String -Path "eiciel-electron/tests/security.spec.js" -Pattern "EICIEL_EXE_PATH"
+          $file = "eiciel-electron/tests/security.spec.js"
+          if (-not (Test-Path $file)) {
+            Write-Error "Test file not found!"
+            exit 1
+          }
+          $content = Get-Content $file -Raw
+          # Replace the exact line that defines exePath
+          $newContent = $content -replace "const exePath = path\.join\('\./dist', 'EicielOS-win32-x64', 'EicielOS\.exe'\);", "const exePath = process.env.EICIEL_EXE_PATH || path.join(__dirname, '..', 'dist', 'EicielOS-win32-x64', 'EicielOS.exe');"
+          Set-Content $file $newContent
+          Write-Host "Patched successfully. Checking line:"
+          Select-String -Path $file -Pattern "exePath"
         shell: pwsh
 
       # Install Playwright browsers inside eiciel-electron
@@ -93,4 +87,4 @@ jobs:
           name: test-artifacts
           path: |
             eiciel-electron/screenshot-*.png
-            build.log
+            eiciel-electron/dist/
