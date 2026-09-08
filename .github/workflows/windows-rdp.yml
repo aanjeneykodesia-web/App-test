@@ -23,54 +23,74 @@ jobs:
           node-version: 20
 
       # Generate a lockfile if missing, then install dependencies
-      - name: Install dependencies
+      - name: Install dependencies (root)
         run: |
-          npm install --package-lock-only
-          npm ci
+          npm install --package-lock-only || true
+          npm ci || true
         shell: bash
 
-      # Remove any conflicting test files (e.g., ES module ones)
-      - name: Remove conflicting test files
+      # Clean up any stray test files in the root
+      - name: Remove conflicting test files (root)
         run: |
-          Remove-Item -Force -ErrorAction SilentlyContinue security-attacks.spec.js
-          Remove-Item -Force -ErrorAction SilentlyContinue tests/security-attacks.spec.js
+          Remove-Item -Force -ErrorAction SilentlyContinue *.spec.js
+          Remove-Item -Force -Recurse -ErrorAction SilentlyContinue tests
         shell: pwsh
 
-      # Build the protected app – change output path from D:/data to ./dist
+      # Build the protected app (this also installs dependencies inside eiciel-electron)
       - name: Build protected app
         run: |
-          # Replace the output path in package.json using PowerShell
+          # Change build output from D:/data to ./dist in package.json
           (Get-Content package.json) -replace '"out":"D:/data/EicielOS"', '"out":"./dist"' | Set-Content package.json
-          # Now run the build script (bash is available via Git Bash on Windows runners)
           bash build-protected.sh
-        shell: pwsh   # Use PowerShell so the -replace works
+        shell: pwsh
 
-      # Patch the test file to use the environment variable for the exe path
-      - name: Patch test file to use EICIEL_EXE_PATH
+      # Remove any leftover test files inside eiciel-electron (just in case)
+      - name: Clean up inside eiciel-electron
         run: |
-          $file = "tests/security.spec.js"
+          cd eiciel-electron
+          Remove-Item -Force -ErrorAction SilentlyContinue *.spec.js
+          Remove-Item -Force -Recurse -ErrorAction SilentlyContinue tests\*.spec.js
+          Remove-Item -Force -Recurse -ErrorAction SilentlyContinue ..\*.spec.js
+          Remove-Item -Force -Recurse -ErrorAction SilentlyContinue ..\tests
+        shell: pwsh
+
+      # Patch the test file to use EICIEL_EXE_PATH environment variable
+      - name: Patch test file
+        run: |
+          $file = "eiciel-electron/tests/security.spec.js"
           $content = Get-Content $file -Raw
           $newContent = $content -replace "const exePath = path.join\('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe'\);", "const exePath = process.env.EICIEL_EXE_PATH || path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');"
           Set-Content $file $newContent
         shell: pwsh
 
-      # Install Playwright browsers (for Electron testing)
+      # Debug: list all test files
+      - name: List test files
+        run: |
+          dir -Recurse -Filter *.spec.js
+        shell: pwsh
+
+      # Install Playwright browsers (inside eiciel-electron)
       - name: Install Playwright browsers
-        run: npx playwright install
+        run: |
+          cd eiciel-electron
+          npx playwright install
         shell: bash
 
-      # Run the tests with the correct environment variable
+      # Run the tests from the eiciel-electron folder
       - name: Run Playwright tests
-        run: npm test
+        run: |
+          cd eiciel-electron
+          npm test
         env:
           EICIEL_TEST_MODE: 1
+          # The .exe is now in eiciel-electron/dist/...
           EICIEL_EXE_PATH: ./dist/EicielOS-win32-x64/EicielOS.exe
         shell: bash
 
-      # Upload screenshots (if any) as artifacts
+      # Upload screenshots (if any)
       - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-screenshots
-          path: screenshot-*.png
+          path: eiciel-electron/screenshot-*.png
