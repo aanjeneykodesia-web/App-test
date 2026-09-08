@@ -1992,7 +1992,7 @@ echo "📦 Building executable to D:/data/EicielOS..."
 npm run build --loglevel=verbose
 
 # ─── Post‑build: install dependencies inside the packaged app ──
-APP_DIR="D:/data/EicielOS/EicielOS-win32-x64/resources/app"
+APP_DIR="./dist/EicielOS-win32-x64/resources/app"
 if [ -d "$APP_DIR" ]; then
   echo "📦 Installing dependencies inside the packaged app..."
   cd "$APP_DIR"
@@ -2014,7 +2014,7 @@ let app, window;
 
 test.beforeAll(async () => {
   test.setTimeout(180000);
-  const exePath = path.join('D:', 'data', 'EicielOS', 'EicielOS-win32-x64', 'EicielOS.exe');
+const exePath = process.env.EICIEL_EXE_PATH || path.join(__dirname, '..', 'dist', 'EicielOS-win32-x64', 'EicielOS.exe');
   console.log('🚀 Launching Electron app...');
   app = await _electron.launch({
     executablePath: exePath,
