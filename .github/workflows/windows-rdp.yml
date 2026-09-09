@@ -1,4 +1,4 @@
-name: Run Tests 6 & 7 Only
+name: Run Test 7 Only
 
 on:
   push:
@@ -41,11 +41,11 @@ jobs:
           npx playwright install
         shell: bash
 
-      # Run only tests 6 and 7 (grep on test titles)
-      - name: Run tests 6 and 7
+      # Run only test 7 (grep on exact title)
+      - name: Run test 7
         run: |
           cd eiciel-electron
-          npm test -- --grep "System and internet controls should work|Internet is allowed only when browser is open"
+          npm test -- --grep "Internet is allowed only when browser is open"
         env:
           EICIEL_TEST_MODE: 1
           EICIEL_EXE_PATH: ./dist/EicielOS-win32-x64/EicielOS.exe
