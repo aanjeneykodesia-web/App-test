@@ -1,4 +1,4 @@
-name: Run Tests 3 & 4 Only
+name: Run Tests 5 & 6 Only
 
 on:
   push:
@@ -41,11 +41,11 @@ jobs:
           npx playwright install
         shell: bash
 
-      # Run only tests 3 and 4 (grep on test titles)
-      - name: Run tests 3 and 4
+      # Run only tests 5 and 6 (grep on test titles)
+      - name: Run tests 5 and 6
         run: |
           cd eiciel-electron
-          npm test -- --grep "IPC calls should be restricted|execScript should be removed"
+          npm test -- --grep "Mouse‑score breach should trigger|System and internet controls should work"
         env:
           EICIEL_TEST_MODE: 1
           EICIEL_EXE_PATH: ./dist/EicielOS-win32-x64/EicielOS.exe
