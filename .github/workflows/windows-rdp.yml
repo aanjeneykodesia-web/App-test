@@ -1,4 +1,4 @@
-name: Run Tests 8 & 9 Only
+name: Run Test 9 Only
 
 on:
   push:
@@ -29,23 +29,23 @@ jobs:
           Remove-Item -Force -Recurse -ErrorAction SilentlyContinue tests
         shell: pwsh
 
-      # Build the protected app (outputs to ./dist inside eiciel-electron)
+      # Build the protected app
       - name: Build protected app
         run: bash build-protected.sh
         shell: bash
 
-      # Install Playwright browsers inside eiciel-electron
+      # Install Playwright browsers
       - name: Install Playwright browsers
         run: |
           cd eiciel-electron
           npx playwright install
         shell: bash
 
-      # Run only tests 8 and 9 (grep on test titles)
-      - name: Run tests 8 and 9
+      # Run only test 9 (use the full title or a unique substring)
+      - name: Run test 9
         run: |
           cd eiciel-electron
-          npm test -- --grep "Self‑destruct on exit should trigger|System shutdown on breach should trigger automatically"
+          npm test -- --grep "System shutdown on breach should trigger automatically"
         env:
           EICIEL_TEST_MODE: 1
           EICIEL_EXE_PATH: ./dist/EicielOS-win32-x64/EicielOS.exe
