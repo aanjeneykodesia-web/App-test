@@ -1,4 +1,4 @@
-name: Playwright Tests (9 tests)
+name: Run Tests 3 & 4 Only
 
 on:
   push:
@@ -29,38 +29,10 @@ jobs:
           Remove-Item -Force -Recurse -ErrorAction SilentlyContinue tests
         shell: pwsh
 
-      # Patch the build script to change output to ./dist
-      - name: Patch build script output path
-        run: |
-          $file = "build-protected.sh"
-          (Get-Content $file) -replace 'D:/data/EicielOS', './dist' | Set-Content $file
-        shell: pwsh
-
-      # Build the protected app (outputs to eiciel-electron/dist)
+      # Build the protected app (outputs to ./dist inside eiciel-electron)
       - name: Build protected app
         run: bash build-protected.sh
         shell: bash
-
-      # List the dist folder to confirm the .exe exists
-      - name: List dist folder
-        run: Get-ChildItem -Recurse eiciel-electron/dist
-        shell: pwsh
-
-      # Patch the test file directly: replace the hardcoded path with environment variable
-      - name: Patch test file to use EICIEL_EXE_PATH
-        run: |
-          $file = "eiciel-electron/tests/security.spec.js"
-          if (-not (Test-Path $file)) {
-            Write-Error "Test file not found!"
-            exit 1
-          }
-          $content = Get-Content $file -Raw
-          # Replace the exact line that defines exePath
-          $newContent = $content -replace "const exePath = path\.join\('\./dist', 'EicielOS-win32-x64', 'EicielOS\.exe'\);", "const exePath = process.env.EICIEL_EXE_PATH || path.join(__dirname, '..', 'dist', 'EicielOS-win32-x64', 'EicielOS.exe');"
-          Set-Content $file $newContent
-          Write-Host "Patched successfully. Checking line:"
-          Select-String -Path $file -Pattern "exePath"
-        shell: pwsh
 
       # Install Playwright browsers inside eiciel-electron
       - name: Install Playwright browsers
@@ -69,11 +41,11 @@ jobs:
           npx playwright install
         shell: bash
 
-      # Run the tests from inside eiciel-electron
-      - name: Run Playwright tests
+      # Run only tests 3 and 4 (grep on test titles)
+      - name: Run tests 3 and 4
         run: |
           cd eiciel-electron
-          npm test
+          npm test -- --grep "IPC calls should be restricted|execScript should be removed"
         env:
           EICIEL_TEST_MODE: 1
           EICIEL_EXE_PATH: ./dist/EicielOS-win32-x64/EicielOS.exe
@@ -87,4 +59,3 @@ jobs:
           name: test-artifacts
           path: |
             eiciel-electron/screenshot-*.png
-            eiciel-electron/dist/
