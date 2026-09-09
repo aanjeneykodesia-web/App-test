@@ -1,4 +1,4 @@
-name: Run Test 7 Only
+name: Run Tests 8 & 9 Only
 
 on:
   push:
@@ -41,11 +41,11 @@ jobs:
           npx playwright install
         shell: bash
 
-      # Run only test 7 (grep on exact title)
-      - name: Run test 7
+      # Run only tests 8 and 9 (grep on test titles)
+      - name: Run tests 8 and 9
         run: |
           cd eiciel-electron
-          npm test -- --grep "Internet is allowed only when browser is open"
+          npm test -- --grep "Self‑destruct on exit should trigger|System shutdown on breach should trigger automatically"
         env:
           EICIEL_TEST_MODE: 1
           EICIEL_EXE_PATH: ./dist/EicielOS-win32-x64/EicielOS.exe
