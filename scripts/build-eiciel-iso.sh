@@ -485,6 +485,7 @@ EOF
 # ─── Patch live-build for Debian 12 security suite name ────────
 # Ubuntu 24.04 ships an old live-build that still uses
 # '<suite>/updates' instead of '<suite>-security' for Debian 12+.
+# ─── Patch live-build for Debian 12 security suite name ────────
 echo "🔧 Patching live-build for bookworm-security…"
 for f in \
     /usr/lib/live/build/lb_chroot_archives \
@@ -495,9 +496,9 @@ for f in \
     /usr/share/live/build/lb_bootstrap_archives \
     /usr/share/live/build/functions/defaults.sh \
     /usr/lib/live/build/functions/defaults.sh ; do
-  if [ -f "$f" ] && grep -q 'updates' "$f" 2>/dev/null; then
+  if [ -f "$f" ] && grep -q 'bookworm/updates' "$f" 2>/dev/null; then
     cp "$f" "$f.eiciel.bak"
-    sed -i 's|/updates|/-security|g; s|-updates|-security|g' "$f"
+    sed -i 's|bookworm/updates|bookworm-security|g' "$f"
     echo "   patched: $f"
   fi
 done
@@ -505,20 +506,6 @@ done
 echo "📦 Configuring live-build…"
 ./auto/config
 
-# ─── Patch generated archive lists after auto/config ───────────
-echo "🔧 Patching generated archive lists…"
-find config -type f \( -name '*.list' -o -name '*.list.chroot' -o -name '*.list.binary' \) 2>/dev/null \
-  | while read -r f; do
-      if grep -q 'bookworm/updates' "$f" 2>/dev/null; then
-        sed -i 's|bookworm/updates|bookworm-security|g' "$f"
-        echo "   patched: $f"
-      fi
-    done
-
-echo "📦 Running debootstrap…"
-lb bootstrap 2>&1 | tee bootstrap.log
-
-[ -x "chroot/bin/sh" ] || { echo "❌ Bootstrap failed."; tail -40 bootstrap.log; exit 1; }
 
 echo "📦 Running chroot stage…"
 lb chroot 2>&1 | tee chroot.log
