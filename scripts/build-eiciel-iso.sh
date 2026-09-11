@@ -44,10 +44,15 @@ esac
 lb clean --purge >/dev/null 2>&1 || true
 rm -rf config auto chroot binary cache .build local bootstrap.log chroot.log binary.log 2>/dev/null || true
 mkdir -p auto config/hooks config/package-lists config/bootloaders/grub \
-         config/includes.chroot/etc/eiciel config/includes.chroot/etc/audit/rules.d \
-         config/includes.chroot/etc/fail2ban/jail.d config/includes.chroot/etc/systemd/system \
-         config/includes.chroot/etc/ssh/sshd_config.d config/includes.chroot/etc/profile.d \
-         config/includes.chroot/usr/local/sbin config/includes.chroot/root/.ssh \
+         config/includes.chroot/etc/eiciel \
+         config/includes.chroot/etc/audit/rules.d \
+         config/includes.chroot/etc/fail2ban/jail.d \
+         config/includes.chroot/etc/systemd/system \
+         config/includes.chroot/etc/ssh/sshd_config.d \
+         config/includes.chroot/etc/profile.d \
+         config/includes.chroot/etc/default \
+         config/includes.chroot/usr/local/sbin \
+         config/includes.chroot/root/.ssh \
          config/includes.chroot/var/lib/incidents
 
 # auto/config
