@@ -52,31 +52,20 @@ jobs:
           chmod +x eiciel-app-dist/eicield/eicield.py
           chmod +x eiciel-app-dist/eicield/install-daemon.sh
 
-      - env:
-          MGMT_IP:            ${{ secrets.MGMT_IP }}
-          WEBHOOK_URL:        ${{ secrets.WEBHOOK_URL }}
-          SSH_AUTHORIZED_KEY: ${{ secrets.SSH_AUTHORIZED_KEY }}
+      - name: Check config file exists
         run: |
           set -euo pipefail
-          : "${MGMT_IP:?MGMT_IP secret not set in GitHub}"
-          : "${WEBHOOK_URL:?WEBHOOK_URL secret not set in GitHub}"
-          mkdir -p config
-          umask 077
-          {
-            printf 'MGMT_IP="%s"\n'            "$MGMT_IP"
-            printf 'WEBHOOK_URL="%s"\n'        "$WEBHOOK_URL"
-            printf 'STOP_SERVICES="%s"\n'      "sshd nginx apache2 postgresql mysql mariadb redis-server docker"
-            printf 'SSH_AUTHORIZED_KEY="%s"\n' "$SSH_AUTHORIZED_KEY"
-            printf 'ENABLE_PERSISTENCE=0\n'
-            printf 'INCLUDE_DASHBOARD=auto\n'
-            printf 'COOLDOWN_SECONDS=600\n'
-            printf 'HOSTNAME_NEW=eiciel-srv\n'
-          } > config/config.local.env
+          if [ ! -f config/config.local.env ]; then
+            echo "::error::config/config.local.env not found in repo"
+            exit 1
+          fi
+          set -a
+          . config/config.local.env
+          set +a
+          : "${MGMT_IP:?MGMT_IP missing in config/config.local.env}"
+          : "${WEBHOOK_URL:?WEBHOOK_URL missing in config/config.local.env}"
 
       - run: sudo -E bash scripts/build-eiciel-iso.sh
-
-      - if: always()
-        run: rm -f config/config.local.env
 
       - uses: actions/upload-artifact@v4
         with:
