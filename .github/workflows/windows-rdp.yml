@@ -1,68 +1,98 @@
-name: Build Eiciel OS ISO
+name: build
 
 on:
-  workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
-  build-iso:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 180
-
+  # ─────────────────────────────────────────────────────────────
+  # 1. Build the Electron dashboard
+  # ─────────────────────────────────────────────────────────────
+  app:
+    name: Build dashboard
+    runs-on: ubuntu-24.04
     steps:
-      # ─── 1. Checkout ─────────────────────────────────────
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ─── 2. Install tools ────────────────────────────────
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            live-build debootstrap xorriso squashfs-tools \
-            mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
-            syslinux-utils isolinux \
-            nodejs npm
-
-      # ─── 3. Create the Electron app source ───────────────
-      # build-protected.sh creates eiciel-electron/ with all source
-      # files. Steps that target Windows may fail — we ignore those.
-      - name: Create Electron app source
-        run: |
-          chmod +x build-protected.sh
-          bash build-protected.sh || true
-          echo ""
-          echo "=== After build-protected.sh ==="
-          ls -la eiciel-electron/ 2>/dev/null || echo "❌ eiciel-electron not created"
-
-      # ─── 4. Build the ISO ────────────────────────────────
-      # build-eiciel-os.sh repackages the app for Linux and builds the ISO
-      - name: Build ISO
-        run: |
-          chmod +x build-eiciel-os.sh
-          sudo -E bash build-eiciel-os.sh || true
-
-      # ─── 5. Upload logs always ───────────────────────────
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
+      - uses: actions/setup-node@v4
         with:
-          name: iso-build-logs
-          path: |
-            bootstrap.log
-            chroot.log
-            binary.log
-            build.log
-          if-no-files-found: warn
+          node-version: '20'
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Build Electron dashboard
+        run: ./scripts/build-eiciel-app.sh
+
+      - name: Verify dashboard exists
+        run: |
+          ls -la eiciel-app-dist/EicielDashboard-linux-x64/
+          test -x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eiciel-dashboard
+          path: eiciel-app-dist/
           retention-days: 7
 
-      # ─── 6. Upload ISO if produced ───────────────────────
-      - name: Upload ISO
-        if: success()
-        uses: actions/upload-artifact@v4
+  # ─────────────────────────────────────────────────────────────
+  # 2. Build the ISO (needs the dashboard)
+  # ─────────────────────────────────────────────────────────────
+  iso:
+    name: Build ISO
+    needs: app
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            live-build \
+            debootstrap \
+            xorriso \
+            squashfs-tools \
+            mtools \
+            dosfstools \
+            grub-efi-amd64-bin \
+            grub-pc-bin
+
+      - name: Download dashboard artifact
+        uses: actions/download-artifact@v4
         with:
-          name: eiciel-os-iso
-          path: eiciel-os.iso
+          name: eiciel-dashboard
+          path: eiciel-app-dist/
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
+
+      - name: Build ISO
+        env:
+          MGMT_IP:            ${{ secrets.MGMT_IP }}
+          WEBHOOK_URL:        ${{ secrets.WEBHOOK_URL }}
+          SSH_AUTHORIZED_KEY: ${{ secrets.SSH_AUTHORIZED_KEY }}
+        run: |
+          sudo -E ./scripts/build-eiciel-iso.sh
+
+      - name: Verify ISO
+        run: |
+          ls -lh eiciel-server.iso
+          file eiciel-server.iso
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eiciel-server-iso
+          path: eiciel-server.iso
           retention-days: 30
-          compression-level: 0
+
+      - name: Attach ISO to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: eiciel-server.iso
+          generate_release_notes: true
