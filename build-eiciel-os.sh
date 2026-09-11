@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════
-#  Eiciel OS – Standalone ISO builder (fixed for bookworm security)
+#  Eiciel OS – Standalone ISO builder (fixed: no duplicate sources)
 #
 #  Usage:
 #    1. Put this script in a folder that ALSO contains "eiciel-electron/"
@@ -41,12 +41,11 @@ for cmd in lb debootstrap xorriso mksquashfs node npm; do
 done
 
 # ─────────────────────────────────────────────────────────────
-# 0.5  Ensure live-build is up-to-date (critical for bookworm)
+# 0.5  Ensure live-build is current
 # ─────────────────────────────────────────────────────────────
 echo "📦 [0/7] Upgrading live-build and dpkg…"
 sudo apt-get update -qq
-sudo apt-get install -y -qq dpkg
-sudo apt-get install -y -qq live-build
+sudo apt-get install -y -qq dpkg live-build
 echo "   live-build version: $(lb --version 2>/dev/null || echo 'unknown')"
 
 # ─────────────────────────────────────────────────────────────
@@ -55,7 +54,7 @@ echo "   live-build version: $(lb --version 2>/dev/null || echo 'unknown')"
 echo "📦 [0.7/7] Cleaning old build state…"
 lb clean --purge >/dev/null 2>&1 || true
 rm -rf config/binary config/bootstrap config/chroot config/common config/source \
-       chroot binary cache .build local 2>/dev/null || true
+       config/archives chroot binary cache .build local 2>/dev/null || true
 mkdir -p auto
 
 # ─────────────────────────────────────────────────────────────
@@ -79,7 +78,7 @@ cp -a "$APP_SRC/dist/EicielOS-linux-x64/." "$CHROOT_APP/"
 chmod -R 755 "$CHROOT_APP"
 
 # ─────────────────────────────────────────────────────────────
-# 2. auto/config — explicit bookworm, correct mirrors
+# 2. Create directories
 # ─────────────────────────────────────────────────────────────
 mkdir -p config/includes.chroot/etc/systemd/system
 mkdir -p config/includes.chroot/etc/X11/xorg.conf.d
@@ -91,6 +90,9 @@ mkdir -p config/package-lists
 mkdir -p config/bootloaders/grub
 mkdir -p auto
 
+# ─────────────────────────────────────────────────────────────
+# 3. auto/config — correct bookworm mirrors, NO archives file
+# ─────────────────────────────────────────────────────────────
 cat > auto/config << 'EOF'
 #!/bin/bash
 set -e
@@ -126,17 +128,202 @@ EOF
 chmod +x auto/config
 
 # ─────────────────────────────────────────────────────────────
-# 2.5  Override the chroot's sources.list to fix bookworm security
+# 4. Hook 005 — force a clean, correct sources.list FIRST
 # ─────────────────────────────────────────────────────────────
-mkdir -p config/archives
-cat > config/archives/eiciel.list.chroot << 'EOF'
+cat > config/hooks/005-fix-sources.hook.chroot << 'EOF'
+#!/bin/bash
+set -e
+echo "[005] Force-fixing apt sources…"
+
+# Remove any existing list files that could duplicate entries
+rm -f /etc/apt/sources.list
+rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true
+
+# Write the correct Debian bookworm sources
+cat > /etc/apt/sources.list << 'EOSRC'
 deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
 deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
 deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
+EOSRC
+
+echo "    sources.list written:"
+cat /etc/apt/sources.list
+
+# Refresh indices so apt can find the packages we need later
+apt-get update -qq || apt-get update
 EOF
 
 # ─────────────────────────────────────────────────────────────
-# 3. Package list
+# 5. Hook 010 — Node.js (runs AFTER sources fix)
+# ─────────────────────────────────────────────────────────────
+cat > config/hooks/010-nodejs.hook.chroot << 'EOF'
+#!/bin/bash
+set -e
+echo "[010] Installing Node.js 20…"
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs
+EOF
+
+# ─────────────────────────────────────────────────────────────
+# 6. Hook 020 — eiciel user
+# ─────────────────────────────────────────────────────────────
+cat > config/hooks/020-user.hook.chroot << 'EOF'
+#!/bin/bash
+set -e
+echo "[020] Creating eiciel user…"
+if ! id -u eiciel >/dev/null 2>&1; then
+  useradd -m -s /bin/bash eiciel
+  echo "eiciel:eiciel" | chpasswd
+  usermod -aG sudo,audio,video,netdev,bluetooth,cdrom eiciel
+  echo "eiciel ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/eiciel
+  chmod 440 /etc/sudoers.d/eiciel
+fi
+chown -R eiciel:eiciel /opt/eiciel
+chmod -R 755 /opt/eiciel
+EOF
+
+# ─────────────────────────────────────────────────────────────
+# 7. Hook 030 — shell service
+# ─────────────────────────────────────────────────────────────
+cat > config/hooks/030-shell.hook.chroot << 'EOF'
+#!/bin/bash
+set -e
+echo "[030] Installing Eiciel shell service…"
+
+cat > /etc/systemd/system/eiciel-shell.service << 'EOSVC'
+[Unit]
+Description=Eiciel OS Shell
+After=systemd-user-sessions.service network.target NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=simple
+User=eiciel
+Environment=DISPLAY=:0
+Environment=HOME=/home/eiciel
+Environment=EICIEL_TEST_MODE=0
+WorkingDirectory=/opt/eiciel
+ExecStart=/usr/bin/startx /opt/eiciel/EicielOS --no-sandbox --disable-gpu-sandbox --kiosk
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOSVC
+
+systemctl enable eiciel-shell.service
+
+mkdir -p /etc/systemd/system/getty@tty1.service.d
+cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << 'EOAL'
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin eiciel --noclear %I $TERM
+EOAL
+
+cat > /home/eiciel/.bash_profile << 'EOBP'
+if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+  exec startx /opt/eiciel/EicielOS --no-sandbox --disable-gpu-sandbox --kiosk
+fi
+EOBP
+chown eiciel:eiciel /home/eiciel/.bash_profile
+
+mkdir -p /home/eiciel/.config/openbox
+cat > /home/eiciel/.config/openbox/rc.xml << 'EOOB'
+<?xml version="1.0" encoding="UTF-8"?>
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <applications>
+    <application class="*">
+      <decor>no</decor>
+      <maximized>yes</maximized>
+      <position force="yes"><x>0</x><y>0</y></position>
+    </application>
+  </applications>
+  <keyboard></keyboard>
+</openbox_config>
+EOOB
+chown -R eiciel:eiciel /home/eiciel/.config
+EOF
+
+# ─────────────────────────────────────────────────────────────
+# 8. Hook 040 — firewall
+# ─────────────────────────────────────────────────────────────
+cat > config/hooks/040-firewall.hook.chroot << 'EOF'
+#!/bin/bash
+set -e
+echo "[040] Firewall…"
+cat > /etc/nftables.conf << 'EONFT'
+#!/usr/sbin/nft -f
+flush ruleset
+table inet eiciel {
+    chain input {
+        type filter hook input priority 0; policy drop;
+        ct state established,related accept
+        iif lo accept
+        ip protocol icmp accept
+        ip6 nexthdr icmpv6 accept
+    }
+    chain forward {
+        type filter hook forward priority 0; policy drop;
+    }
+    chain output {
+        type filter hook output priority 0; policy accept;
+    }
+}
+EONFT
+systemctl enable nftables
+EOF
+
+# ─────────────────────────────────────────────────────────────
+# 9. Hook 050 — hardening
+# ─────────────────────────────────────────────────────────────
+cat > config/hooks/050-hardening.hook.chroot << 'EOF'
+#!/bin/bash
+set -e
+echo "[050] Hardening…"
+systemctl mask ctrl-alt-del.target || true
+
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/99-kiosk.conf << 'EOX'
+Section "ServerFlags"
+    Option "DontVTSwitch" "True"
+    Option "DontZap"      "True"
+    Option "DontZoom"     "True"
+EndSection
+EOX
+
+cat > /etc/X11/xorg.conf.d/98-no-blank.conf << 'EOB'
+Section "ServerFlags"
+    Option "BlankTime"   "0"
+    Option "StandbyTime" "0"
+    Option "SuspendTime" "0"
+    Option "OffTime"     "0"
+EndSection
+EOB
+
+grep -q '^NAutoVTs=' /etc/systemd/logind.conf || echo "NAutoVTs=1" >> /etc/systemd/logind.conf
+grep -q '^ReserveVT=' /etc/systemd/logind.conf || echo "ReserveVT=1" >> /etc/systemd/logind.conf
+EOF
+
+# ─────────────────────────────────────────────────────────────
+# 10. Hook 060 — cleanup
+# ─────────────────────────────────────────────────────────────
+cat > config/hooks/060-cleanup.hook.chroot << 'EOF'
+#!/bin/bash
+set -e
+echo "[060] Cleanup…"
+apt-get autoremove -y || true
+apt-get clean || true
+rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* || true
+rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* || true
+find /var/log -type f -exec truncate -s 0 {} \; 2>/dev/null || true
+EOF
+
+chmod +x config/hooks/*.hook.chroot
+
+# ─────────────────────────────────────────────────────────────
+# 11. Package list
 # ─────────────────────────────────────────────────────────────
 cat > config/package-lists/eiciel.list.chroot << 'EOF'
 linux-image-amd64
@@ -202,161 +389,7 @@ htop
 EOF
 
 # ─────────────────────────────────────────────────────────────
-# 4. Hooks (unchanged)
-# ─────────────────────────────────────────────────────────────
-cat > config/hooks/010-nodejs.hook.chroot << 'EOF'
-#!/bin/bash
-set -e
-echo "[010] Installing Node.js 20…"
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
-EOF
-
-cat > config/hooks/020-user.hook.chroot << 'EOF'
-#!/bin/bash
-set -e
-echo "[020] Creating eiciel user…"
-if ! id -u eiciel >/dev/null 2>&1; then
-  useradd -m -s /bin/bash eiciel
-  echo "eiciel:eiciel" | chpasswd
-  usermod -aG sudo,audio,video,netdev,bluetooth,cdrom eiciel
-  echo "eiciel ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/eiciel
-  chmod 440 /etc/sudoers.d/eiciel
-fi
-chown -R eiciel:eiciel /opt/eiciel
-chmod -R 755 /opt/eiciel
-EOF
-
-cat > config/hooks/030-shell.hook.chroot << 'EOF'
-#!/bin/bash
-set -e
-echo "[030] Installing Eiciel shell service…"
-
-cat > /etc/systemd/system/eiciel-shell.service << 'EOSVC'
-[Unit]
-Description=Eiciel OS Shell
-After=systemd-user-sessions.service network.target NetworkManager.service
-Wants=NetworkManager.service
-
-[Service]
-Type=simple
-User=eiciel
-Environment=DISPLAY=:0
-Environment=HOME=/home/eiciel
-Environment=EICIEL_TEST_MODE=0
-WorkingDirectory=/opt/eiciel
-ExecStart=/usr/bin/startx /opt/eiciel/EicielOS --no-sandbox --disable-gpu-sandbox --kiosk
-Restart=always
-RestartSec=3
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-EOSVC
-
-systemctl enable eiciel-shell.service
-
-mkdir -p /etc/systemd/system/getty@tty1.service.d
-cat > /etc/systemd/system/getty@tty1.service.d/autologin.conf << 'EOAL'
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin eiciel --noclear %I $TERM
-EOAL
-
-cat > /home/eiciel/.bash_profile << 'EOBP'
-if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
-  exec startx /opt/eiciel/EicielOS --no-sandbox --disable-gpu-sandbox --kiosk
-fi
-EOBP
-chown eiciel:eiciel /home/eiciel/.bash_profile
-
-mkdir -p /home/eiciel/.config/openbox
-cat > /home/eiciel/.config/openbox/rc.xml << 'EOOB'
-<?xml version="1.0" encoding="UTF-8"?>
-<openbox_config xmlns="http://openbox.org/3.4/rc">
-  <applications>
-    <application class="*">
-      <decor>no</decor>
-      <maximized>yes</maximized>
-      <position force="yes"><x>0</x><y>0</y></position>
-    </application>
-  </applications>
-  <keyboard></keyboard>
-</openbox_config>
-EOOB
-chown -R eiciel:eiciel /home/eiciel/.config
-EOF
-
-cat > config/hooks/040-firewall.hook.chroot << 'EOF'
-#!/bin/bash
-set -e
-echo "[040] Firewall…"
-cat > /etc/nftables.conf << 'EONFT'
-#!/usr/sbin/nft -f
-flush ruleset
-table inet eiciel {
-    chain input {
-        type filter hook input priority 0; policy drop;
-        ct state established,related accept
-        iif lo accept
-        ip protocol icmp accept
-        ip6 nexthdr icmpv6 accept
-    }
-    chain forward {
-        type filter hook forward priority 0; policy drop;
-    }
-    chain output {
-        type filter hook output priority 0; policy accept;
-    }
-}
-EONFT
-systemctl enable nftables
-EOF
-
-cat > config/hooks/050-hardening.hook.chroot << 'EOF'
-#!/bin/bash
-set -e
-echo "[050] Hardening…"
-systemctl mask ctrl-alt-del.target || true
-
-mkdir -p /etc/X11/xorg.conf.d
-cat > /etc/X11/xorg.conf.d/99-kiosk.conf << 'EOX'
-Section "ServerFlags"
-    Option "DontVTSwitch" "True"
-    Option "DontZap"      "True"
-    Option "DontZoom"     "True"
-EndSection
-EOX
-
-cat > /etc/X11/xorg.conf.d/98-no-blank.conf << 'EOB'
-Section "ServerFlags"
-    Option "BlankTime"   "0"
-    Option "StandbyTime" "0"
-    Option "SuspendTime" "0"
-    Option "OffTime"     "0"
-EndSection
-EOB
-
-grep -q '^NAutoVTs=' /etc/systemd/logind.conf || echo "NAutoVTs=1" >> /etc/systemd/logind.conf
-grep -q '^ReserveVT=' /etc/systemd/logind.conf || echo "ReserveVT=1" >> /etc/systemd/logind.conf
-EOF
-
-cat > config/hooks/060-cleanup.hook.chroot << 'EOF'
-#!/bin/bash
-set -e
-echo "[060] Cleanup…"
-apt-get autoremove -y || true
-apt-get clean || true
-rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* || true
-rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/* || true
-find /var/log -type f -exec truncate -s 0 {} \; 2>/dev/null || true
-EOF
-
-chmod +x config/hooks/*.hook.chroot
-
-# ─────────────────────────────────────────────────────────────
-# 5. Static chroot files
+# 12. Static chroot files
 # ─────────────────────────────────────────────────────────────
 echo "eiciel" > config/includes.chroot/etc/hostname
 
@@ -398,7 +431,7 @@ table inet eiciel {
 EOF
 
 # ─────────────────────────────────────────────────────────────
-# 6. GRUB bootloader
+# 13. GRUB bootloader
 # ─────────────────────────────────────────────────────────────
 cat > config/bootloaders/grub/config.cfg << 'EOF'
 set timeout=3
@@ -427,7 +460,7 @@ menuentry "Eiciel OS (recovery shell)" {
 EOF
 
 # ─────────────────────────────────────────────────────────────
-# 7. Build — with explicit bootstrap verification
+# 14. Build
 # ─────────────────────────────────────────────────────────────
 echo "📦 [3/7] Configuring live-build…"
 ./auto/config
@@ -435,13 +468,10 @@ echo "📦 [3/7] Configuring live-build…"
 echo "📦 [4/7] Running debootstrap (this creates chroot/)…"
 lb bootstrap 2>&1 | tee bootstrap.log
 
-# ─── Verify the chroot was actually created ─────────────────
 if [ ! -d "chroot" ] || [ ! -x "chroot/bin/sh" ] || [ ! -x "chroot/usr/bin/env" ]; then
   echo ""
   echo "❌ Bootstrap failed: chroot/ is empty or incomplete."
-  echo "   Check bootstrap.log for the exact error."
-  echo ""
-  echo "Last 40 lines of bootstrap.log:"
+  echo "   Last 40 lines of bootstrap.log:"
   tail -40 bootstrap.log
   exit 1
 fi
@@ -454,7 +484,7 @@ echo "📦 [6/7] Building binary stage (this creates the ISO)…"
 lb binary 2>&1 | tee binary.log
 
 # ─────────────────────────────────────────────────────────────
-# 8. Report
+# 15. Report
 # ─────────────────────────────────────────────────────────────
 ISO=$(ls -1 *.iso 2>/dev/null | head -1 || true)
 if [ -z "$ISO" ]; then
