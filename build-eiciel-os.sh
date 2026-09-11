@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════
-#  Eiciel OS – Standalone ISO builder (single-file, bookworm fix)
+#  Eiciel OS – Standalone ISO builder (fixed for GitHub Actions)
 #
 #  Usage:
 #    1. Put this script in a folder that ALSO contains "eiciel-electron/"
@@ -40,20 +40,30 @@ for cmd in lb debootstrap xorriso mksquashfs node npm; do
   fi
 done
 
-mkdir -p config/includes.chroot/etc/systemd/system
-mkdir -p config/includes.chroot/etc/X11/xorg.conf.d
-mkdir -p config/includes.chroot/etc/default
-mkdir -p config/includes.chroot/opt/eiciel
-mkdir -p config/includes.binary/boot/grub
-mkdir -p config/hooks
-mkdir -p config/package-lists
-mkdir -p config/bootloaders/grub
+# ─────────────────────────────────────────────────────────────
+# 0.5  Ensure live-build is up-to-date (critical for bookworm)
+# ─────────────────────────────────────────────────────────────
+echo "📦 [0/7] Upgrading live-build and dpkg…"
+sudo apt-get update -qq
+sudo apt-get install -y -qq dpkg
+# Try to get a newer live-build from backports if available
+sudo apt-get install -y -qq -t bookworm-backports live-build 2>/dev/null || \
+  sudo apt-get install -y -qq live-build
+echo "   live-build version: $(lb --version 2>/dev/null || echo 'unknown')"
+
+# ─────────────────────────────────────────────────────────────
+# 0.6  Full clean — remove ALL stale state
+# ─────────────────────────────────────────────────────────────
+echo "📦 [0.7/7] Cleaning old build state…"
+lb clean --purge >/dev/null 2>&1 || true
+rm -rf config/binary config/bootstrap config/chroot config/common config/source \
+       chroot binary cache .build local 2>/dev/null || true
 mkdir -p auto
 
 # ─────────────────────────────────────────────────────────────
 # 1. Build the Electron app for Linux x64
 # ─────────────────────────────────────────────────────────────
-echo "📦 [1/6] Building Electron app (linux-x64)…"
+echo "📦 [1/7] Building Electron app (linux-x64)…"
 (
   cd "$APP_SRC"
   npm install --no-audit --no-fund --loglevel=error
@@ -64,15 +74,25 @@ echo "📦 [1/6] Building Electron app (linux-x64)…"
   fi
 )
 
-echo "📦 [2/6] Staging app into chroot…"
+echo "📦 [2/7] Staging app into chroot…"
 rm -rf "$CHROOT_APP"
 mkdir -p "$CHROOT_APP"
 cp -a "$APP_SRC/dist/EicielOS-linux-x64/." "$CHROOT_APP/"
 chmod -R 755 "$CHROOT_APP"
 
 # ─────────────────────────────────────────────────────────────
-# 2. auto/config  (explicitly use bookworm & correct mirrors)
+# 2. auto/config — explicitly bookworm, correct mirrors
 # ─────────────────────────────────────────────────────────────
+mkdir -p config/includes.chroot/etc/systemd/system
+mkdir -p config/includes.chroot/etc/X11/xorg.conf.d
+mkdir -p config/includes.chroot/etc/default
+mkdir -p config/includes.chroot/opt/eiciel
+mkdir -p config/includes.binary/boot/grub
+mkdir -p config/hooks
+mkdir -p config/package-lists
+mkdir -p config/bootloaders/grub
+mkdir -p auto
+
 cat > auto/config << 'EOF'
 #!/bin/bash
 set -e
@@ -174,7 +194,7 @@ htop
 EOF
 
 # ─────────────────────────────────────────────────────────────
-# 4. Hooks
+# 4. Hooks (unchanged)
 # ─────────────────────────────────────────────────────────────
 cat > config/hooks/010-nodejs.hook.chroot << 'EOF'
 #!/bin/bash
@@ -399,19 +419,31 @@ menuentry "Eiciel OS (recovery shell)" {
 EOF
 
 # ─────────────────────────────────────────────────────────────
-# 7. Build the ISO
+# 7. Build — with explicit bootstrap verification
 # ─────────────────────────────────────────────────────────────
-echo "📦 [3/6] Configuring live-build…"
-lb clean --purge >/dev/null 2>&1 || true
+echo "📦 [3/7] Configuring live-build…"
 ./auto/config
 
-# Force a fresh apt update in the chroot to avoid expired release files
-echo "📦 [3.5/6] Forcing apt-get update inside chroot…"
-lb chroot
-lb chroot_apt update || true
+echo "📦 [4/7] Running debootstrap (this creates chroot/)…"
+lb bootstrap 2>&1 | tee bootstrap.log
 
-echo "📦 [4/6] Running live-build (15–25 min)…"
-lb build 2>&1 | tee build.log
+# ─── Verify the chroot was actually created ─────────────────
+if [ ! -d "chroot" ] || [ ! -x "chroot/bin/sh" ] || [ ! -x "chroot/usr/bin/env" ]; then
+  echo ""
+  echo "❌ Bootstrap failed: chroot/ is empty or incomplete."
+  echo "   Check bootstrap.log for the exact error."
+  echo ""
+  echo "Last 40 lines of bootstrap.log:"
+  tail -40 bootstrap.log
+  exit 1
+fi
+echo "✅ chroot/ created successfully."
+
+echo "📦 [5/7] Running chroot stage…"
+lb chroot 2>&1 | tee chroot.log
+
+echo "📦 [6/7] Building binary stage (this creates the ISO)…"
+lb binary 2>&1 | tee binary.log
 
 # ─────────────────────────────────────────────────────────────
 # 8. Report
@@ -422,7 +454,6 @@ if [ -z "$ISO" ]; then
   exit 1
 fi
 
-# Rename to a friendly name
 if [ "$ISO" != "${ISO_NAME}.iso" ]; then
   mv "$ISO" "${ISO_NAME}.iso"
   ISO="${ISO_NAME}.iso"
@@ -439,8 +470,4 @@ echo "    sudo dd if=$ISO of=/dev/sdX bs=4M status=progress oflag=sync"
 echo ""
 echo "Test in QEMU:"
 echo "    qemu-system-x86_64 -m 4096 -cdrom $ISO -boot d"
-echo ""
-echo "Boot behaviour:"
-echo "    GRUB menu  →  live kernel  →  auto-login eiciel"
-echo "    →  X + Openbox (kiosk)  →  /opt/eiciel/EicielOS"
 echo ""
