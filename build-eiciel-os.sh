@@ -74,7 +74,7 @@ cp -a "$APP_SRC/dist/EicielOS-linux-x64/." "$CHROOT_APP/"
 chmod -R 755 "$CHROOT_APP"
 
 # ─────────────────────────────────────────────────────────────
-# 2. auto/config
+# 2. auto/config  (removed --updates and --security flags)
 # ─────────────────────────────────────────────────────────────
 cat > auto/config << 'EOF'
 #!/bin/bash
@@ -102,9 +102,6 @@ lb config noauto \
     --bootloader grub-efi \
     --system live \
     --initsystem systemd \
-    --updates false \
-    --security false \
-    --backports false \
     --mirror-bootstrap "http://deb.debian.org/debian/" \
     --mirror-chroot "http://deb.debian.org/debian/" \
     --mirror-chroot-security "http://deb.debian.org/debian-security/" \
