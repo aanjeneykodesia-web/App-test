@@ -1,18 +1,15 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════
-#  Eiciel OS – Standalone ISO builder (single-file)
+#  Eiciel OS – Standalone ISO builder (single-file, bookworm fix)
 #
 #  Usage:
 #    1. Put this script in a folder that ALSO contains "eiciel-electron/"
-#       (your existing Electron project).
 #    2. Run:   chmod +x build-eiciel-os.sh && sudo ./build-eiciel-os.sh
 #
 #  Requires (Debian/Ubuntu host):
 #    sudo apt install live-build debootstrap xorriso squashfs-tools \
 #                     mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
 #                     nodejs npm
-#
-#  Output:  ./eiciel-os.iso   (~700 MB, bootable USB / VM)
 # ═══════════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -74,7 +71,7 @@ cp -a "$APP_SRC/dist/EicielOS-linux-x64/." "$CHROOT_APP/"
 chmod -R 755 "$CHROOT_APP"
 
 # ─────────────────────────────────────────────────────────────
-# 2. auto/config  (removed --updates and --security flags)
+# 2. auto/config  (explicitly use bookworm & correct mirrors)
 # ─────────────────────────────────────────────────────────────
 cat > auto/config << 'EOF'
 #!/bin/bash
@@ -407,6 +404,11 @@ EOF
 echo "📦 [3/6] Configuring live-build…"
 lb clean --purge >/dev/null 2>&1 || true
 ./auto/config
+
+# Force a fresh apt update in the chroot to avoid expired release files
+echo "📦 [3.5/6] Forcing apt-get update inside chroot…"
+lb chroot
+lb chroot_apt update || true
 
 echo "📦 [4/6] Running live-build (15–25 min)…"
 lb build 2>&1 | tee build.log
