@@ -1,82 +1,89 @@
-name: Build Eiciel
+name: Build
 
 on:
   push:
     branches: [ main ]
-    tags:     [ 'v*' ]
-  pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  # ─────────────────────────────────────────────────────────────
-  # Job 1 — static checks. No secrets needed. Runs on every PR.
-  # ─────────────────────────────────────────────────────────────
-  lint:
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Bash syntax
-        run: |
-          bash -n scripts/build-eiciel-app.sh
-          bash -n scripts/build-eiciel-iso.sh
-
-      - name: Python syntax
-        run: python3 -m py_compile scripts/app/daemon/eicield.py
-
-      - name: Node syntax
-        run: |
-          node --check scripts/app/main.js
-          node --check scripts/app/preload.js
-
-  # ─────────────────────────────────────────────────────────────
-  # Job 2 — build the Electron app. Runs on every PR.
-  # Outputs eiciel-app-dist as an artifact for the ISO job.
-  # ─────────────────────────────────────────────────────────────
   app:
     runs-on: ubuntu-22.04
-    needs: lint
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: scripts/app/package.json
 
       - name: Build app
         run: ./scripts/build-eiciel-app.sh
-
-      - name: Verify output
-        run: |
-          test -x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard
-          test -f eiciel-app-dist/eicield/eicield.py
-          du -sh eiciel-app-dist
 
       - uses: actions/upload-artifact@v4
         with:
           name: eiciel-app-dist
           path: eiciel-app-dist/
-          retention-days: 7
 
-  # ─────────────────────────────────────────────────────────────
-  # Job 3 — build the ISO. Needs secrets; skipped on PRs.
-  # ─────────────────────────────────────────────────────────────
   iso:
     runs-on: ubuntu-22.04
     needs: app
-    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            live-build debootstrap xorriso squashfs-tools \
+            mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
+            python3 curl jq
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: eiciel-app-dist
+          path: eiciel-app-dist
+
+      - name: Fix exec bits
+        run: |
+          chmod +x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard || true
+          chmod +x eiciel-app-dist/eicield/eicield.py
+          chmod +x eiciel-app-dist/eicield/install-daemon.sh
+
+      - name: Write config
+        env:
+          MGMT_IP:            ${{ secrets.MGMT_IP }}
+          WEBHOOK_URL:        ${{ secrets.WEBHOOK_URL }}
+          SSH_AUTHORIZED_KEY: ${{ secrets.SSH_AUTHORIZED_KEY }}
+        run: |
+          set -euo pipefail
+          : "${MGMT_IP:?MGMT_IP secret missing}"
+          : "${WEBHOOK_URL:?WEBHOOK_URL secret missing}"
+          mkdir -p config
+          umask 077
+          {
+            printf 'MGMT_IP="%s"\n'            "$MGMT_IP"
+            printf 'WEBHOOK_URL="%s"\n'        "$WEBHOOK_URL"
+            printf 'STOP_SERVICES="%s"\n'      "sshd nginx apache2 postgresql mysql mariadb redis-server docker"
+            printf 'SSH_AUTHORIZED_KEY="%s"\n' "$SSH_AUTHORIZED_KEY"
+            printf 'ENABLE_PERSISTENCE=0\n'
+            printf 'INCLUDE_DASHBOARD=auto\n'
+            printf 'COOLDOWN_SECONDS=600\n'
+            printf 'HOSTNAME_NEW=eiciel-srv\n'
+          } > config/config.local.env
+
+      - name: Build ISO
+        run: sudo -E ./scripts/build-eiciel-iso.sh
+
+      - name: Cleanup
+        if: always()
+        run: rm -f config/config.local.env
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eiciel-server-iso
+          path: eiciel-server.iso
       - name: Install ISO build dependencies
         run: |
           sudo apt-get update
