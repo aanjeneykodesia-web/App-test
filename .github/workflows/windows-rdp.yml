@@ -11,9 +11,11 @@ jobs:
     timeout-minutes: 180
 
     steps:
+      # ─── 1. Checkout ─────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ─── 2. Install tools ────────────────────────────────
       - name: Install build tools
         run: |
           sudo apt-get update
@@ -23,12 +25,25 @@ jobs:
             syslinux-utils isolinux \
             nodejs npm
 
+      # ─── 3. Create the Electron app source ───────────────
+      # build-protected.sh creates eiciel-electron/ with all source
+      # files. Steps that target Windows may fail — we ignore those.
+      - name: Create Electron app source
+        run: |
+          chmod +x build-protected.sh
+          bash build-protected.sh || true
+          echo ""
+          echo "=== After build-protected.sh ==="
+          ls -la eiciel-electron/ 2>/dev/null || echo "❌ eiciel-electron not created"
+
+      # ─── 4. Build the ISO ────────────────────────────────
+      # build-eiciel-os.sh repackages the app for Linux and builds the ISO
       - name: Build ISO
         run: |
           chmod +x build-eiciel-os.sh
           sudo -E bash build-eiciel-os.sh || true
 
-      # ─── Upload logs always ─────────────────────────────
+      # ─── 5. Upload logs always ───────────────────────────
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -42,7 +57,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      # ─── Upload ISO if produced ─────────────────────────
+      # ─── 6. Upload ISO if produced ───────────────────────
       - name: Upload ISO
         if: success()
         uses: actions/upload-artifact@v4
