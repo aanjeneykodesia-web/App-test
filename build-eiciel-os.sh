@@ -114,7 +114,7 @@ lb config noauto \
     --apt-recommends false \
     --firmware-binary false \
     --firmware-chroot false \
-    --initramfs compact \
+    --initramfs auto \
     --compression xz \
     --bootloader grub-efi \
     --system live \
