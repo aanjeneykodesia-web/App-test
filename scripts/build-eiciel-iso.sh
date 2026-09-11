@@ -478,39 +478,57 @@ menuentry "Eiciel Server (recovery shell)" {
 }
 EOF
 
+# ─────────────────────────────────────────────────────────────────
 # Build
+# ─────────────────────────────────────────────────────────────────
+
+# ─── Patch live-build for Debian 12 security suite name ────────
+# Ubuntu 24.04 ships an old live-build that still uses
+# '<suite>/updates' instead of '<suite>-security' for Debian 12+.
+echo "🔧 Patching live-build for bookworm-security…"
+for f in \
+    /usr/lib/live/build/lb_chroot_archives \
+    /usr/share/live/build/lb_chroot_archives \
+    /usr/lib/live/build/lb_binary_archives \
+    /usr/share/live/build/lb_binary_archives \
+    /usr/lib/live/build/lb_bootstrap_archives \
+    /usr/share/live/build/lb_bootstrap_archives \
+    /usr/share/live/build/functions/defaults.sh \
+    /usr/lib/live/build/functions/defaults.sh ; do
+  if [ -f "$f" ] && grep -q 'updates' "$f" 2>/dev/null; then
+    cp "$f" "$f.eiciel.bak"
+    sed -i 's|/updates|/-security|g; s|-updates|-security|g' "$f"
+    echo "   patched: $f"
+  fi
+done
+
 echo "📦 Configuring live-build…"
 ./auto/config
 
-# ─── Fix: Debian 12 renamed '<suite>/updates' → '<suite>-security' ───
-# Ubuntu's live-build 3.x still emits the old name, which 404s.
-echo "🔧 Patching generated archive lists for bookworm-security…"
-patched=0
-while IFS= read -r -d '' f; do
-  if grep -q 'bookworm/updates' "$f" 2>/dev/null; then
-    sed -i 's|bookworm/updates|bookworm-security|g' "$f"
-    echo "   patched: $f"
-    patched=$((patched + 1))
-  fi
-done < <(find config -type f \( -name '*.list' -o -name '*.list.chroot' -o -name '*.list.binary' \) -print0 2>/dev/null)
-
-if [ "$patched" -eq 0 ]; then
-  echo "   ⚠️  no archive lists patched — check config/archives/ manually"
-else
-  echo "   ✅ patched $patched file(s)"
-fi
+# ─── Patch generated archive lists after auto/config ───────────
+echo "🔧 Patching generated archive lists…"
+find config -type f \( -name '*.list' -o -name '*.list.chroot' -o -name '*.list.binary' \) 2>/dev/null \
+  | while read -r f; do
+      if grep -q 'bookworm/updates' "$f" 2>/dev/null; then
+        sed -i 's|bookworm/updates|bookworm-security|g' "$f"
+        echo "   patched: $f"
+      fi
+    done
 
 echo "📦 Running debootstrap…"
 lb bootstrap 2>&1 | tee bootstrap.log
-echo "📦 Running debootstrap…"
-lb bootstrap 2>&1 | tee bootstrap.log
+
 [ -x "chroot/bin/sh" ] || { echo "❌ Bootstrap failed."; tail -40 bootstrap.log; exit 1; }
+
 echo "📦 Running chroot stage…"
 lb chroot 2>&1 | tee chroot.log
+
 echo "📦 Running binary stage…"
 lb binary 2>&1 | tee binary.log
 
+# ─────────────────────────────────────────────────────────────────
 # Report
+# ─────────────────────────────────────────────────────────────────
 ISO=$(ls -1 *.iso 2>/dev/null | head -1 || true)
 [ -n "$ISO" ] || { echo "❌ No ISO produced."; exit 1; }
 [ "$ISO" != "${ISO_NAME}.iso" ] && mv "$ISO" "${ISO_NAME}.iso" && ISO="${ISO_NAME}.iso"
