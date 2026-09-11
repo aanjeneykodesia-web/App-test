@@ -1,61 +1,69 @@
-name: Run Test 9 Only
+name: Build Eiciel OS ISO
 
 on:
+  workflow_dispatch:
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-
-env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
 jobs:
-  test:
-    runs-on: windows-latest
+  build-iso:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 180
 
     steps:
-      - name: Checkout code
+      # ─── 1. Checkout ──────────────────────────────────────
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      # Remove conflicting test files in the root
-      - name: Clean up root test files
+      # ─── 2. Install build tools ──────────────────────────
+      - name: Install build tools
         run: |
-          Remove-Item -Force -ErrorAction SilentlyContinue *.spec.js
-          Remove-Item -Force -Recurse -ErrorAction SilentlyContinue tests
-        shell: pwsh
+          sudo apt-get update
+          sudo apt-get install -y \
+            live-build debootstrap xorriso squashfs-tools \
+            mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
+            nodejs npm
 
-      # Build the protected app
-      - name: Build protected app
-        run: bash build-protected.sh
-        shell: bash
-
-      # Install Playwright browsers
-      - name: Install Playwright browsers
+      # ─── 3. Install Electron dependencies ────────────────
+      - name: Install Electron deps
         run: |
           cd eiciel-electron
-          npx playwright install
-        shell: bash
+          npm install --no-audit --no-fund --loglevel=error
 
-      # Run only test 9 (use the full title or a unique substring)
-      - name: Run test 9
+      # ─── 4. Build Electron app for Linux x64 ─────────────
+      - name: Build Linux app
         run: |
           cd eiciel-electron
-          npm test -- --grep "System shutdown on breach should trigger automatically"
-        env:
-          EICIEL_TEST_MODE: 1
-          EICIEL_EXE_PATH: ./dist/EicielOS-win32-x64/EicielOS.exe
-        shell: bash
+          npx electron-packager . EicielOS \
+            --platform=linux --arch=x64 \
+            --out=./dist --overwrite --no-prune
+          ls -la dist/
 
-      # Upload screenshots if any
-      - name: Upload artifacts
-        if: always()
+      # ─── 5. Build the ISO ────────────────────────────────
+      - name: Build ISO
+        run: |
+          chmod +x build-eiciel-os.sh
+          sudo -E bash build-eiciel-os.sh
+
+      # ─── 6. Verify ISO exists ────────────────────────────
+      - name: Verify ISO
+        run: |
+          ls -lh eiciel-os.iso || (echo "❌ ISO missing" && exit 1)
+
+      # ─── 7. Upload ISO artifact ──────────────────────────
+      - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts
-          path: |
-            eiciel-electron/screenshot-*.png
+          name: eiciel-os-iso
+          path: eiciel-os.iso
+          retention-days: 30
+          compression-level: 0
+
+      # ─── 8. Upload build log on failure ──────────────────
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-build-log
+          path: build.log
+          if-no-files-found: ignore
