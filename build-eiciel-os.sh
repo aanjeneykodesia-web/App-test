@@ -477,6 +477,16 @@ if [ ! -d "chroot" ] || [ ! -x "chroot/bin/sh" ] || [ ! -x "chroot/usr/bin/env" 
 fi
 echo "✅ chroot/ created successfully."
 
+# ─── Patch live-build to use bookworm-security (not bookworm/updates) ───
+echo "📦 Patching live-build for Debian 12 security suite name…"
+for f in /usr/lib/live/build/lb_chroot_archives /usr/share/live/build/lb_chroot_archives; do
+  if [ -f "$f" ]; then
+    sudo cp "$f" "$f.bak"
+    sudo sed -i 's|/updates|/-security|g' "$f"
+    echo "   patched: $f"
+  fi
+done
+
 echo "📦 [5/7] Running chroot stage…"
 lb chroot 2>&1 | tee chroot.log
 
