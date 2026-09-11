@@ -481,6 +481,27 @@ EOF
 # Build
 echo "📦 Configuring live-build…"
 ./auto/config
+
+# ─── Fix: Debian 12 renamed '<suite>/updates' → '<suite>-security' ───
+# Ubuntu's live-build 3.x still emits the old name, which 404s.
+echo "🔧 Patching generated archive lists for bookworm-security…"
+patched=0
+while IFS= read -r -d '' f; do
+  if grep -q 'bookworm/updates' "$f" 2>/dev/null; then
+    sed -i 's|bookworm/updates|bookworm-security|g' "$f"
+    echo "   patched: $f"
+    patched=$((patched + 1))
+  fi
+done < <(find config -type f \( -name '*.list' -o -name '*.list.chroot' -o -name '*.list.binary' \) -print0 2>/dev/null)
+
+if [ "$patched" -eq 0 ]; then
+  echo "   ⚠️  no archive lists patched — check config/archives/ manually"
+else
+  echo "   ✅ patched $patched file(s)"
+fi
+
+echo "📦 Running debootstrap…"
+lb bootstrap 2>&1 | tee bootstrap.log
 echo "📦 Running debootstrap…"
 lb bootstrap 2>&1 | tee bootstrap.log
 [ -x "chroot/bin/sh" ] || { echo "❌ Bootstrap failed."; tail -40 bootstrap.log; exit 1; }
