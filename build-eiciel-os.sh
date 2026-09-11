@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════════
-#  Eiciel OS – Standalone ISO builder (fixed for GitHub Actions)
+#  Eiciel OS – Standalone ISO builder (fixed for bookworm security)
 #
 #  Usage:
 #    1. Put this script in a folder that ALSO contains "eiciel-electron/"
@@ -46,9 +46,7 @@ done
 echo "📦 [0/7] Upgrading live-build and dpkg…"
 sudo apt-get update -qq
 sudo apt-get install -y -qq dpkg
-# Try to get a newer live-build from backports if available
-sudo apt-get install -y -qq -t bookworm-backports live-build 2>/dev/null || \
-  sudo apt-get install -y -qq live-build
+sudo apt-get install -y -qq live-build
 echo "   live-build version: $(lb --version 2>/dev/null || echo 'unknown')"
 
 # ─────────────────────────────────────────────────────────────
@@ -81,7 +79,7 @@ cp -a "$APP_SRC/dist/EicielOS-linux-x64/." "$CHROOT_APP/"
 chmod -R 755 "$CHROOT_APP"
 
 # ─────────────────────────────────────────────────────────────
-# 2. auto/config — explicitly bookworm, correct mirrors
+# 2. auto/config — explicit bookworm, correct mirrors
 # ─────────────────────────────────────────────────────────────
 mkdir -p config/includes.chroot/etc/systemd/system
 mkdir -p config/includes.chroot/etc/X11/xorg.conf.d
@@ -121,11 +119,21 @@ lb config noauto \
     --initsystem systemd \
     --mirror-bootstrap "http://deb.debian.org/debian/" \
     --mirror-chroot "http://deb.debian.org/debian/" \
-    --mirror-chroot-security "http://deb.debian.org/debian-security/" \
+    --mirror-chroot-security "http://security.debian.org/debian-security/" \
     --mirror-binary "http://deb.debian.org/debian/" \
-    --mirror-binary-security "http://deb.debian.org/debian-security/"
+    --mirror-binary-security "http://security.debian.org/debian-security/"
 EOF
 chmod +x auto/config
+
+# ─────────────────────────────────────────────────────────────
+# 2.5  Override the chroot's sources.list to fix bookworm security
+# ─────────────────────────────────────────────────────────────
+mkdir -p config/archives
+cat > config/archives/eiciel.list.chroot << 'EOF'
+deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware
+deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware
+deb http://security.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware
+EOF
 
 # ─────────────────────────────────────────────────────────────
 # 3. Package list
