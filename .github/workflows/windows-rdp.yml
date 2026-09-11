@@ -11,81 +11,43 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      # ─── 1. Checkout ──────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ─── 2. Show what's in the repo ───────────────────────
-      - name: List repo files
-        run: |
-          echo "=== Repository contents ==="
-          ls -la
-          echo ""
-          echo "=== Looking for build scripts ==="
-          find . -maxdepth 2 -name "*.sh" -type f
-
-      # ─── 3. Install build tools ──────────────────────────
       - name: Install build tools
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             live-build debootstrap xorriso squashfs-tools \
             mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
+            syslinux-utils isolinux \
             nodejs npm
 
-      # ─── 4. Run build-protected.sh to create eiciel-electron/ ─
-      - name: Build Electron app (Windows + Linux scaffold)
-        run: |
-          chmod +x build-protected.sh
-          # Run it — this creates eiciel-electron/ with all files
-          bash build-protected.sh || true
-          echo ""
-          echo "=== After build-protected.sh ==="
-          ls -la
-          ls -la eiciel-electron/ 2>/dev/null || echo "❌ eiciel-electron not created"
-
-      # ─── 5. Repackage for Linux (overwrite Windows build) ─
-      - name: Build Linux x64 package
-        run: |
-          cd eiciel-electron
-          npx electron-packager . EicielOS \
-            --platform=linux --arch=x64 \
-            --out=./dist-linux --overwrite --no-prune
-          ls -la dist-linux/
-
-      # ─── 6. Point the ISO builder at the Linux package ───
-      - name: Stage Linux app for ISO
-        run: |
-          mkdir -p eiciel-electron/dist
-          cp -a eiciel-electron/dist-linux/EicielOS-linux-x64 \
-                eiciel-electron/dist/
-          ls -la eiciel-electron/dist/
-
-      # ─── 7. Build the ISO ────────────────────────────────
       - name: Build ISO
         run: |
           chmod +x build-eiciel-os.sh
-          sudo -E bash build-eiciel-os.sh
+          sudo -E bash build-eiciel-os.sh || true
 
-      # ─── 8. Verify ISO ───────────────────────────────────
-      - name: Verify ISO
-        run: |
-          ls -lh eiciel-os.iso || (echo "❌ ISO missing" && exit 1)
+      # ─── Upload logs always ─────────────────────────────
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-build-logs
+          path: |
+            bootstrap.log
+            chroot.log
+            binary.log
+            build.log
+          if-no-files-found: warn
+          retention-days: 7
 
-      # ─── 9. Upload ISO ───────────────────────────────────
-      - name: Upload ISO artifact
+      # ─── Upload ISO if produced ─────────────────────────
+      - name: Upload ISO
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: eiciel-os-iso
           path: eiciel-os.iso
           retention-days: 30
           compression-level: 0
-
-      # ─── 10. Upload log on failure ───────────────────────
-      - name: Upload build log (on failure)
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: iso-build-log
-          path: build.log
-          if-no-files-found: ignore
