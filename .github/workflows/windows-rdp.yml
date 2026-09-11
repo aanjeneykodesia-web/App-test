@@ -57,6 +57,9 @@ jobs:
           WEBHOOK_URL:        ${{ secrets.WEBHOOK_URL }}
           SSH_AUTHORIZED_KEY: ${{ secrets.SSH_AUTHORIZED_KEY }}
         run: |
+          set -euo pipefail
+          : "${MGMT_IP:?MGMT_IP secret not set in GitHub}"
+          : "${WEBHOOK_URL:?WEBHOOK_URL secret not set in GitHub}"
           mkdir -p config
           umask 077
           {
