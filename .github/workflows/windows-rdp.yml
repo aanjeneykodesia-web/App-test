@@ -18,8 +18,9 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build app
-        run: ./scripts/build-eiciel-app.sh
+      - run: chmod +x scripts/*.sh
+
+      - run: bash scripts/build-eiciel-app.sh
 
       - uses: actions/upload-artifact@v4
         with:
@@ -32,8 +33,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deps
-        run: |
+      - run: |
           sudo apt-get update
           sudo apt-get install -y \
             live-build debootstrap xorriso squashfs-tools \
@@ -45,21 +45,18 @@ jobs:
           name: eiciel-app-dist
           path: eiciel-app-dist
 
-      - name: Fix exec bits
-        run: |
+      - run: chmod +x scripts/*.sh
+
+      - run: |
           chmod +x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard || true
           chmod +x eiciel-app-dist/eicield/eicield.py
           chmod +x eiciel-app-dist/eicield/install-daemon.sh
 
-      - name: Write config
-        env:
+      - env:
           MGMT_IP:            ${{ secrets.MGMT_IP }}
           WEBHOOK_URL:        ${{ secrets.WEBHOOK_URL }}
           SSH_AUTHORIZED_KEY: ${{ secrets.SSH_AUTHORIZED_KEY }}
         run: |
-          set -euo pipefail
-          : "${MGMT_IP:?MGMT_IP secret missing}"
-          : "${WEBHOOK_URL:?WEBHOOK_URL secret missing}"
           mkdir -p config
           umask 077
           {
@@ -73,101 +70,12 @@ jobs:
             printf 'HOSTNAME_NEW=eiciel-srv\n'
           } > config/config.local.env
 
-      - name: Build ISO
-        run: sudo -E ./scripts/build-eiciel-iso.sh
+      - run: sudo -E bash scripts/build-eiciel-iso.sh
 
-      - name: Cleanup
-        if: always()
+      - if: always()
         run: rm -f config/config.local.env
 
       - uses: actions/upload-artifact@v4
         with:
           name: eiciel-server-iso
           path: eiciel-server.iso
-      - name: Install ISO build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            live-build debootstrap xorriso squashfs-tools \
-            mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
-            python3 curl jq
-
-      - name: Download app artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: eiciel-app-dist
-          path: eiciel-app-dist
-
-      - name: Ensure executable bits survived artifact round-trip
-        run: |
-          chmod +x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard || true
-          chmod +x eiciel-app-dist/eicield/eicield.py
-          chmod +x eiciel-app-dist/eicield/install-daemon.sh
-
-      - name: Write config/config.local.env from secrets
-        env:
-          MGMT_IP:             ${{ secrets.MGMT_IP }}
-          WEBHOOK_URL:         ${{ secrets.WEBHOOK_URL }}
-          SSH_AUTHORIZED_KEY:  ${{ secrets.SSH_AUTHORIZED_KEY }}
-          ALLOW_PUBLIC_NTFY:   ${{ secrets.ALLOW_PUBLIC_NTFY }}
-        run: |
-          set -euo pipefail
-          : "${MGMT_IP:?MGMT_IP secret is not set}"
-          : "${WEBHOOK_URL:?WEBHOOK_URL secret is not set}"
-
-          if ! [[ "$MGMT_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-            echo "::error::MGMT_IP must be a bare IPv4 address, got: $MGMT_IP"
-            exit 1
-          fi
-
-          case "$WEBHOOK_URL" in
-            https://ntfy.sh/*)
-              if [ "${ALLOW_PUBLIC_NTFY:-0}" != "1" ]; then
-                echo "::error::WEBHOOK_URL points to public ntfy.sh. Refusing."
-                exit 1
-              fi ;;
-          esac
-
-          mkdir -p config
-          umask 077
-          cat > config/config.local.env <<EOF
-          MGMT_IP="$MGMT_IP"
-          WEBHOOK_URL="$WEBHOOK_URL"
-          STOP_SERVICES="sshd nginx apache2 postgresql mysql mariadb redis-server docker"
-          SSH_AUTHORIZED_KEY="$SSH_AUTHORIZED_KEY"
-          ENABLE_PERSISTENCE=0
-          INCLUDE_DASHBOARD=auto
-          COOLDOWN_SECONDS=600
-          HOSTNAME_NEW=eiciel-srv
-          EOF
-          chmod 600 config/config.local.env
-
-      - name: Build ISO
-        run: sudo -E ./scripts/build-eiciel-iso.sh
-
-      - name: Verify ISO
-        run: |
-          test -f eiciel-server.iso
-          ls -lh eiciel-server.iso
-          sha256sum eiciel-server.iso | tee eiciel-server.iso.sha256
-
-      - name: Delete local config (never let it reach cache/artifacts)
-        if: always()
-        run: rm -f config/config.local.env
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: eiciel-server-iso
-          path: |
-            eiciel-server.iso
-            eiciel-server.iso.sha256
-          retention-days: 7
-
-      - name: Attach ISO to release (tags only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            eiciel-server.iso
-            eiciel-server.iso.sha256
-          fail_on_unmatched_files: true
