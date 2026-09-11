@@ -8,6 +8,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   # ─────────────────────────────────────────────────────────────
   # 1. Build the Electron dashboard
@@ -40,19 +43,20 @@ jobs:
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────
-  # 2. Build the ISO (needs the dashboard)
+  # 2. Build the ISO inside Debian 12 (correct live-build)
   # ─────────────────────────────────────────────────────────────
   iso:
     name: Build ISO
     needs: app
     runs-on: ubuntu-24.04
+    container: debian:bookworm
     steps:
       - uses: actions/checkout@v4
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
+          apt-get update -qq
+          apt-get install -y -qq \
             live-build \
             debootstrap \
             xorriso \
@@ -60,7 +64,10 @@ jobs:
             mtools \
             dosfstools \
             grub-efi-amd64-bin \
-            grub-pc-bin
+            grub-pc-bin \
+            ca-certificates \
+            git \
+            curl
 
       - name: Download dashboard artifact
         uses: actions/download-artifact@v4
@@ -71,13 +78,19 @@ jobs:
       - name: Make scripts executable
         run: chmod +x scripts/*.sh
 
+      - name: Verify live-build version
+        run: |
+          lb --version
+          echo "---"
+          uname -a
+
       - name: Build ISO
         env:
           MGMT_IP:            ${{ secrets.MGMT_IP }}
           WEBHOOK_URL:        ${{ secrets.WEBHOOK_URL }}
           SSH_AUTHORIZED_KEY: ${{ secrets.SSH_AUTHORIZED_KEY }}
-        run: |
-          sudo -E ./scripts/build-eiciel-iso.sh
+          INCLUDE_DASHBOARD:  auto
+        run: ./scripts/build-eiciel-iso.sh
 
       - name: Verify ISO
         run: |
@@ -96,3 +109,4 @@ jobs:
         with:
           files: eiciel-server.iso
           generate_release_notes: true
+          
