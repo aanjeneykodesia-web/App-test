@@ -482,7 +482,7 @@ echo "📦 Patching live-build for Debian 12 security suite name…"
 for f in /usr/lib/live/build/lb_chroot_archives /usr/share/live/build/lb_chroot_archives; do
   if [ -f "$f" ]; then
     sudo cp "$f" "$f.bak"
-    sudo sed -i 's|/updates|/-security|g' "$f"
+    sudo sed -i 's|/updates|-security|g' "$f"
     echo "   patched: $f"
   fi
 done
