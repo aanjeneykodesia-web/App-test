@@ -1,23 +1,21 @@
-name: build
+name: Build Eiciel
 
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [ main ]
+    tags:     [ 'v*' ]
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   # ─────────────────────────────────────────────────────────────
-  # 1. Build the Electron dashboard
+  # Job 1 — static checks. No secrets needed. Runs on every PR.
   # ─────────────────────────────────────────────────────────────
-  app:
-    name: Build dashboard
-    runs-on: ubuntu-24.04
+  lint:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -25,91 +23,144 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Make scripts executable
-        run: chmod +x scripts/*.sh
+      - name: Bash syntax
+        run: |
+          bash -n scripts/build-eiciel-app.sh
+          bash -n scripts/build-eiciel-iso.sh
 
-      - name: Build Electron dashboard
+      - name: Python syntax
+        run: python3 -m py_compile scripts/app/daemon/eicield.py
+
+      - name: Node syntax
+        run: |
+          node --check scripts/app/main.js
+          node --check scripts/app/preload.js
+
+  # ─────────────────────────────────────────────────────────────
+  # Job 2 — build the Electron app. Runs on every PR.
+  # Outputs eiciel-app-dist as an artifact for the ISO job.
+  # ─────────────────────────────────────────────────────────────
+  app:
+    runs-on: ubuntu-22.04
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: scripts/app/package.json
+
+      - name: Build app
         run: ./scripts/build-eiciel-app.sh
 
-      - name: Verify dashboard exists
+      - name: Verify output
         run: |
-          ls -la eiciel-app-dist/EicielDashboard-linux-x64/
           test -x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard
+          test -f eiciel-app-dist/eicield/eicield.py
+          du -sh eiciel-app-dist
 
       - uses: actions/upload-artifact@v4
         with:
-          name: eiciel-dashboard
+          name: eiciel-app-dist
           path: eiciel-app-dist/
           retention-days: 7
 
   # ─────────────────────────────────────────────────────────────
-  # 2. Build the ISO inside Debian 12 (correct live-build)
+  # Job 3 — build the ISO. Needs secrets; skipped on PRs.
   # ─────────────────────────────────────────────────────────────
   iso:
-    name: Build ISO
+    runs-on: ubuntu-22.04
     needs: app
-    runs-on: ubuntu-24.04
-    container:
-      image: debian:bookworm
-      options: --privileged
+    if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Install ISO build dependencies
         run: |
-          apt-get update -qq
-          apt-get install -y -qq \
-            live-build \
-            debootstrap \
-            xorriso \
-            squashfs-tools \
-            mtools \
-            dosfstools \
-            grub-efi-amd64-bin \
-            grub-pc-bin \
-            ca-certificates \
-            git \
-            curl
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            live-build debootstrap xorriso squashfs-tools \
+            mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
+            python3 curl jq
 
-      - name: Download dashboard artifact
+      - name: Download app artifact
         uses: actions/download-artifact@v4
         with:
-          name: eiciel-dashboard
-          path: eiciel-app-dist/
+          name: eiciel-app-dist
+          path: eiciel-app-dist
 
-      - name: Make scripts executable
-        run: chmod +x scripts/*.sh
-
-      - name: Verify live-build version
+      - name: Ensure executable bits survived artifact round-trip
         run: |
-          lb --version
-          echo "---"
-          uname -a
-          echo "---"
-          mount | head -5
+          chmod +x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard || true
+          chmod +x eiciel-app-dist/eicield/eicield.py
+          chmod +x eiciel-app-dist/eicield/install-daemon.sh
+
+      - name: Write config/config.local.env from secrets
+        env:
+          MGMT_IP:             ${{ secrets.MGMT_IP }}
+          WEBHOOK_URL:         ${{ secrets.WEBHOOK_URL }}
+          SSH_AUTHORIZED_KEY:  ${{ secrets.SSH_AUTHORIZED_KEY }}
+          ALLOW_PUBLIC_NTFY:   ${{ secrets.ALLOW_PUBLIC_NTFY }}
+        run: |
+          set -euo pipefail
+          : "${MGMT_IP:?MGMT_IP secret is not set}"
+          : "${WEBHOOK_URL:?WEBHOOK_URL secret is not set}"
+
+          if ! [[ "$MGMT_IP" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+            echo "::error::MGMT_IP must be a bare IPv4 address, got: $MGMT_IP"
+            exit 1
+          fi
+
+          case "$WEBHOOK_URL" in
+            https://ntfy.sh/*)
+              if [ "${ALLOW_PUBLIC_NTFY:-0}" != "1" ]; then
+                echo "::error::WEBHOOK_URL points to public ntfy.sh. Refusing."
+                exit 1
+              fi ;;
+          esac
+
+          mkdir -p config
+          umask 077
+          cat > config/config.local.env <<EOF
+          MGMT_IP="$MGMT_IP"
+          WEBHOOK_URL="$WEBHOOK_URL"
+          STOP_SERVICES="sshd nginx apache2 postgresql mysql mariadb redis-server docker"
+          SSH_AUTHORIZED_KEY="$SSH_AUTHORIZED_KEY"
+          ENABLE_PERSISTENCE=0
+          INCLUDE_DASHBOARD=auto
+          COOLDOWN_SECONDS=600
+          HOSTNAME_NEW=eiciel-srv
+          EOF
+          chmod 600 config/config.local.env
 
       - name: Build ISO
-        env:
-          MGMT_IP:            ${{ secrets.MGMT_IP }}
-          WEBHOOK_URL:        ${{ secrets.WEBHOOK_URL }}
-          SSH_AUTHORIZED_KEY: ${{ secrets.SSH_AUTHORIZED_KEY }}
-          INCLUDE_DASHBOARD:  auto
-        run: ./scripts/build-eiciel-iso.sh
+        run: sudo -E ./scripts/build-eiciel-iso.sh
 
       - name: Verify ISO
         run: |
+          test -f eiciel-server.iso
           ls -lh eiciel-server.iso
-          file eiciel-server.iso
+          sha256sum eiciel-server.iso | tee eiciel-server.iso.sha256
+
+      - name: Delete local config (never let it reach cache/artifacts)
+        if: always()
+        run: rm -f config/config.local.env
 
       - uses: actions/upload-artifact@v4
         with:
           name: eiciel-server-iso
-          path: eiciel-server.iso
-          retention-days: 30
+          path: |
+            eiciel-server.iso
+            eiciel-server.iso.sha256
+          retention-days: 7
 
-      - name: Attach ISO to release
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Attach ISO to release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: eiciel-server.iso
-          generate_release_notes: true
+          files: |
+            eiciel-server.iso
+            eiciel-server.iso.sha256
+          fail_on_unmatched_files: true
