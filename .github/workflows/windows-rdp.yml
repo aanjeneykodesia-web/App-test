@@ -52,18 +52,22 @@ jobs:
           chmod +x eiciel-app-dist/eicield/eicield.py
           chmod +x eiciel-app-dist/eicield/install-daemon.sh
 
-      - name: Check config file exists
+      - name: Write config/config.local.env
         run: |
           set -euo pipefail
-          if [ ! -f config/config.local.env ]; then
-            echo "::error::config/config.local.env not found in repo"
-            exit 1
-          fi
-          set -a
-          . config/config.local.env
-          set +a
-          : "${MGMT_IP:?MGMT_IP missing in config/config.local.env}"
-          : "${WEBHOOK_URL:?WEBHOOK_URL missing in config/config.local.env}"
+          mkdir -p config
+          umask 077
+          {
+            printf 'MGMT_IP="%s"\n'            "10.0.0.1"
+            printf 'WEBHOOK_URL="%s"\n'        "https://ntfy.sh/eiciel-alerts-x7k2p9q4"
+            printf 'STOP_SERVICES="%s"\n'      "sshd nginx apache2 postgresql mysql mariadb redis-server docker"
+            printf 'SSH_AUTHORIZED_KEY="%s"\n' ""
+            printf 'ENABLE_PERSISTENCE=0\n'
+            printf 'INCLUDE_DASHBOARD=auto\n'
+            printf 'COOLDOWN_SECONDS=600\n'
+            printf 'HOSTNAME_NEW="eiciel-srv"\n'
+          } > config/config.local.env
+          cat config/config.local.env
 
       - run: sudo -E bash scripts/build-eiciel-iso.sh
 
