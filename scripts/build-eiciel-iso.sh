@@ -89,6 +89,7 @@ mkdir -p auto config/hooks config/package-lists config/bootloaders/grub \
          config/includes.chroot/etc/ssh/sshd_config.d \
          config/includes.chroot/etc/profile.d \
          config/includes.chroot/usr/local/sbin \
+         config/includes.chroot/usr/local/bin \
          config/includes.chroot/root/.ssh \
          config/includes.chroot/var/lib/incidents
 
