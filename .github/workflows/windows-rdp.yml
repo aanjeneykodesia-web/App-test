@@ -1,16 +1,23 @@
-name: Build
+name: build
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  # ─────────────────────────────────────────────────────────────
+  # 1. Build the Electron dashboard
+  # ─────────────────────────────────────────────────────────────
   app:
-    runs-on: ubuntu-22.04
+    name: Build dashboard
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
@@ -18,61 +25,85 @@ jobs:
         with:
           node-version: '20'
 
-      - run: chmod +x scripts/*.sh
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
 
-      - run: bash scripts/build-eiciel-app.sh
+      - name: Build Electron dashboard
+        run: ./scripts/build-eiciel-app.sh
 
+      - name: Verify dashboard exists
+        run: |
+          ls -la eiciel-app-dist/EicielDashboard-linux-x64/
+          test -x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard
       - uses: actions/upload-artifact@v4
         with:
-          name: eiciel-app-dist
+          name: eiciel-dashboard
           path: eiciel-app-dist/
+          retention-days: 7
 
+  # ─────────────────────────────────────────────────────────────
+  # 2. Build the ISO inside Debian 12 (correct live-build)
+  # ─────────────────────────────────────────────────────────────
   iso:
-    runs-on: ubuntu-22.04
+    name: Build ISO
     needs: app
+    runs-on: ubuntu-24.04
+    container:
+      image: debian:bookworm
+      options: --privileged
     steps:
       - uses: actions/checkout@v4
 
-      - run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            live-build debootstrap xorriso squashfs-tools \
-            mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
-            python3 curl jq
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: eiciel-app-dist
-          path: eiciel-app-dist
-
-      - run: chmod +x scripts/*.sh
-
-      - run: |
-          chmod +x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard || true
-          chmod +x eiciel-app-dist/eicield/eicield.py
-          chmod +x eiciel-app-dist/eicield/install-daemon.sh
-
-      - name: Write config/config.local.env
+      - name: Install build dependencies
         run: |
-          set -euo pipefail
-          mkdir -p config
-          umask 077
-          {
-            printf 'MGMT_IP="%s"\n'            "10.0.0.1"
-            printf 'WEBHOOK_URL="%s"\n'        "https://ntfy.sh/eiciel-alerts-x7k2p9q4"
-            printf 'STOP_SERVICES="%s"\n'      "sshd nginx apache2 postgresql mysql mariadb redis-server docker"
-            printf 'SSH_AUTHORIZED_KEY="%s"\n' ""
-            printf 'ENABLE_PERSISTENCE=0\n'
-            printf 'INCLUDE_DASHBOARD=auto\n'
-            printf 'COOLDOWN_SECONDS=600\n'
-            printf 'HOSTNAME_NEW="eiciel-srv"\n'
-          } > config/config.local.env
-          cat config/config.local.env
+          apt-get update -qq
+          apt-get install -y -qq \
+            live-build \
+            debootstrap \
+            xorriso \
+            squashfs-tools \
+            mtools \
+            dosfstools \
+            grub-efi-amd64-bin \
+            grub-pc-bin \
+            ca-certificates \
+            git \
+            curl
+      - name: Download dashboard artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: eiciel-dashboard
+          path: eiciel-app-dist/
 
-      - run: sudo -E bash scripts/build-eiciel-iso.sh
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh
 
+      - name: Verify live-build version
+        run: |
+          lb --version
+          echo "---"
+          uname -a
+          echo "---"
+          mount | head -5
+      - name: Build ISO
+        env:
+          MGMT_IP:            ${{ secrets.MGMT_IP }}
+          WEBHOOK_URL:        ${{ secrets.WEBHOOK_URL }}
+          SSH_AUTHORIZED_KEY: ${{ secrets.SSH_AUTHORIZED_KEY }}
+          INCLUDE_DASHBOARD:  auto
+        run: ./scripts/build-eiciel-iso.sh
+
+      - name: Verify ISO
+        run: |
+          ls -lh eiciel-server.iso
+          file eiciel-server.iso
       - uses: actions/upload-artifact@v4
         with:
           name: eiciel-server-iso
           path: eiciel-server.iso
-          
+          retention-days: 30
+
+      - name: Attach ISO to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
