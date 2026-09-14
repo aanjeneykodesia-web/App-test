@@ -2309,7 +2309,6 @@ icoutils
 ltrace
 gdb
 hexedit
-strings
 less
 moreutils
 pv
