@@ -1,27 +1,93 @@
-# .github/workflows/build-and-release.yml
-name: Build and Release
+name: build
 
 on:
   push:
-    tags:
-      - 'v*'   # triggers when you push a tag like v1.0.0
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    runs-on: windows-latest
+    name: Build app + ISO
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    container:
+      image: debian:bookworm
+      options: --privileged --cgroupns=host
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-      - name: Build protected app
+      - uses: actions/checkout@v4
+
+      - name: Install Node 20
         run: |
-          chmod +x build-protected.sh
-          ./build-protected.sh
-        shell: bash
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v1
+          apt-get update -qq
+          apt-get install -y -qq ca-certificates curl gnupg
+          install -d -m 755 /etc/apt/keyrings
+          curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+            | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg
+          echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" \
+            > /etc/apt/sources.list.d/nodesource.list
+          apt-get update -qq
+          apt-get install -y -qq nodejs
+
+      - name: Install build dependencies
+        run: |
+          apt-get install -y -qq \
+            live-build debootstrap xorriso squashfs-tools \
+            mtools dosfstools grub-efi-amd64-bin grub-pc-bin \
+            ca-certificates git curl jq openssl
+
+      - name: Make scripts executable
+        run: chmod +x scripts/*.sh tools/*.sh
+
+      - name: Build everything
+        env:
+          GITHUB_UPLOAD_ENABLED: "1"
+          GITHUB_UPLOAD_TOKEN:   ${{ secrets.INCIDENT_UPLOAD_TOKEN }}
+          GITHUB_UPLOAD_OWNER:   ${{ github.repository_owner }}
+          GITHUB_UPLOAD_REPO:    "eiciel-incidents"
+          GITHUB_UPLOAD_BRANCH:  "main"
+        run: ./scripts/build-eiciel.sh all
+
+      - name: Inspect ISO contents
+        run: |
+          set -e
+          mkdir -p /mnt/iso
+          mount -o loop eiciel-server.iso /mnt/iso
+          echo "── ISO root ──"; ls -la /mnt/iso
+          echo "── /live ──";   ls -lh /mnt/iso/live/
+          echo "── squashfs ──"; du -h /mnt/iso/live/filesystem.squashfs
+          echo "── installer ──"; ls -d /mnt/iso/install* 2>/dev/null || echo "(no installer tree)"
+          umount /mnt/iso
+
+      - uses: actions/upload-artifact@v4
         with:
-          files: |
-            D:/data/EicielOS/EicielOS-win32-x64/EicielOS.exe
-            D:/data/EicielOS/EicielOS-win32-x64/**/*
+          name: eiciel-app-dist
+          path: eiciel-app-dist/
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eiciel-server-iso
+          path: eiciel-server.iso
+          retention-days: 30
+
+      - name: Attach ISO to source release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: eiciel-server.iso
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref, '-rc') || contains(github.ref, '-beta') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
