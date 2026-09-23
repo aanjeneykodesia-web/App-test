@@ -1,0 +1,120 @@
+name: eiciel
+
+on:
+  push:    { branches: [main] }
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ─────────────────────────────────────────────────────────────
+  #  1. Static guard — no build, no root. Catches regressions in
+  #     the script's shape before anything runs.
+  # ─────────────────────────────────────────────────────────────
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+
+      - name: shellcheck (advisory)
+        run: |
+          shopt -s nullglob
+          files=(deepseek_bash_*.sh)
+          [ ${#files[@]} -gt 0 ] || { echo "no script found"; exit 1; }
+          shellcheck -S warning "${files[@]}" || true
+
+      - name: Regression guards
+        run: bash .github/checks/static-guards.sh
+
+  # ─────────────────────────────────────────────────────────────
+  #  2. App build — Electron dashboard + daemon.
+  # ─────────────────────────────────────────────────────────────
+  app:
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Lay out repo as the script expects
+        run: |
+          mkdir -p scripts
+          mv deepseek_bash_*.sh scripts/
+          cat > config/config.local.env <<'EOF'
+          MGMT_IP=10.0.0.1
+          WEBHOOK_URL=https://example.invalid/hook
+          INCLUDE_DASHBOARD=1
+          ENABLE_GUI=0
+          ENABLE_TOOLS=0
+          ENABLE_TOOLS_HEAVY=0
+          ENABLE_METRICS=1
+          LICENSE_GATE_MODE=none
+          EOF
+
+      - name: Build app
+        run: bash scripts/deepseek_bash_*.sh app
+
+      - name: Sanity-check output
+        run: |
+          set -e
+          test -x eiciel-app-dist/EicielDashboard-linux-x64/EicielDashboard
+          test -f eiciel-app-dist/eicield/eicield.py
+          test -f eiciel-app-dist/eicield/eicield.service
+          python3 -m py_compile eiciel-app-dist/eicield/eicield.py
+
+      - name: Daemon unit sanity
+        run: |
+          set -e
+          unit=eiciel-app-dist/eicield/eicield.service
+          grep -q '^PAMName=eiciel-service' "$unit"
+          grep -q '^ProtectSystem=strict'    "$unit"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eiciel-app
+          path: eiciel-app-dist/
+
+  # ─────────────────────────────────────────────────────────────
+  #  3. Firewall + containment in a network namespace.
+  #     Fast, deterministic, no VM.
+  # ─────────────────────────────────────────────────────────────
+  netns:
+    runs-on: ubuntu-latest
+    needs: static
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq nftables conntrack netcat-openbsd
+
+      - name: Lay out repo
+        run: |
+          mkdir -p scripts
+          mv deepseek_bash_*.sh scripts/
+          SCRIPT=$(ls scripts/deepseek_bash_*.sh)
+          echo "SCRIPT=$SCRIPT" >> "$GITHUB_ENV"
+
+      - name: Extract target files from the build script
+        run: bash .github/checks/extract-assets.sh "$SCRIPT" build-assets
+
+      - name: Firewall tests
+        run: sudo -E bash .github/checks/test-firewall.sh
+
+      - name: Containment tests
+        run: sudo -E bash .github/checks/test-containment.sh
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: netns-logs
+          path: |
+            /tmp/fw-rules.txt
+            build-assets/
