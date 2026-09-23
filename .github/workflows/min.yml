@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
+
   static:
     runs-on: ubuntu-latest
     steps:
@@ -16,15 +17,56 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq shellcheck
 
-      - name: shellcheck (advisory)
+      - name: Generate and run static guards
         run: |
+          mkdir -p .github/checks
+          cat > .github/checks/static-guards.sh <<'SCRIPT_EOF'
+          #!/usr/bin/env bash
+          set -uo pipefail
           shopt -s nullglob
           files=(script/deepseek_bash_*.sh)
-          [ ${#files[@]} -gt 0 ] || { echo "no build script in script/"; exit 1; }
-          shellcheck -S warning "${files[@]}" || true
+          [ ${#files[@]} -eq 1 ] || { echo "expected exactly one build script in script/"; exit 1; }
+          S="${files[0]}"
+          fail=0
+          ok()  { printf '  ok    %s\n' "$1"; }
+          bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
 
-      - name: Regression guards
-        run: bash .github/checks/static-guards.sh
+          grep -qE 'ROOT="\$\(cd "\$\(dirname "\$0"\)/\.\." && pwd\)"' "$S" \
+            && ok "ROOT climbs to repo root" \
+            || bad "ROOT wrong for script/ layout"
+
+          grep -qE '\[ ! -c /dev/tty \]' "$S" \
+            && bad "/dev/tty console guard present" \
+            || ok  "no /dev/tty console guard"
+
+          grep -q 'eiciel-has-console.sh' "$S" && ok "has-console helper"   || bad "no has-console helper"
+          grep -q -- '--timeout='         "$S" && ok "bounded ask-password" || bad "unbounded ask-password"
+          grep -q 'TimeoutStartSec'       "$S" && ok "unlock unit bounded"  || bad "unlock unit unbounded"
+          grep -q 'unlock.key'            "$S" && ok "headless unlock key"  || bad "no headless unlock key"
+          grep -q 'secretsState'          "$S" && ok "daemon surfaces state" || bad "daemon hides state"
+          grep -q '_alert_locked_once'    "$S" && ok "locked alert present" || bad "no locked alert"
+          grep -q 'flock -n 9'            "$S" && ok "containment mutex"    || bad "no containment mutex"
+          grep -q 'sparing tty1'          "$S" && ok "tty1 spared"          || bad "tty1 not spared"
+          grep -q 'dst='                  "$S" && ok "conntrack dst parse"  || bad "no dst parse"
+
+          grep -q 'trigger_containment "web"' "$S" \
+            && bad "web auto-triggers" \
+            || ok  "web is log-only"
+
+          grep -qE 'NOPASSWD:[[:space:]]*ALL' "$S" \
+            && bad "NOPASSWD:ALL present" \
+            || ok  "no NOPASSWD:ALL"
+
+          for legacy in 'pam_google_authenticator' '/var/lib/eiciel/totp/admin.secret'; do
+            if grep -q "$legacy" "$S"; then bad "legacy reference: $legacy"; else ok "no legacy: $legacy"; fi
+          done
+
+          echo
+          [ "$fail" -eq 0 ] && echo "STATIC: PASS" || echo "STATIC: FAIL"
+          exit "$fail"
+          SCRIPT_EOF
+          chmod +x .github/checks/static-guards.sh
+          bash .github/checks/static-guards.sh
 
   app:
     runs-on: ubuntu-latest
@@ -38,7 +80,7 @@ jobs:
       - name: Write config.local.env
         run: |
           mkdir -p config
-          cat > config/config.local.env <<'EOF'
+          cat > config/config.local.env <<'ENV_EOF'
           MGMT_IP=10.0.0.1
           WEBHOOK_URL=https://example.invalid/hook
           INCLUDE_DASHBOARD=1
@@ -47,7 +89,7 @@ jobs:
           ENABLE_TOOLS_HEAVY=0
           ENABLE_METRICS=1
           LICENSE_GATE_MODE=none
-          EOF
+          ENV_EOF
 
       - name: Build app
         run: bash script/deepseek_bash_*.sh app
@@ -83,14 +125,248 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq nftables conntrack netcat-openbsd
 
-      - name: Extract target files from the build script
-        run: bash .github/checks/extract-assets.sh script/deepseek_bash_*.sh build-assets
+      - name: Generate extract-assets.sh and pull scripts out of the build script
+        run: |
+          mkdir -p .github/checks
+          cat > .github/checks/extract-assets.sh <<'SCRIPT_EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SCRIPT="${1:?usage: extract-assets.sh <build-script> <outdir>}"
+          OUT="${2:?usage: extract-assets.sh <build-script> <outdir>}"
+          mkdir -p "$OUT"
+          extract() {
+            local target="$1" name="$2" start token end
+            start=$(grep -nE "cat > [\"']?[^\"']*${target}[\"']? <<'[A-Z_]+'" "$SCRIPT" | head -1 | cut -d: -f1)
+            [ -n "$start" ] || { echo "  ✗ no writer for $target" >&2; return 1; }
+            token=$(sed -n "${start}p" "$SCRIPT" | grep -oE "<<'?[A-Z_]+'?" | tr -d "<'")
+            end=$(awk -v s="$start" -v t="$token" 'NR > s && $0 == t { print NR; exit }' "$SCRIPT")
+            [ -n "$end" ] || { echo "  ✗ no terminator for $target" >&2; return 1; }
+            sed -n "$((start+1)),$((end-1))p" "$SCRIPT" > "$OUT/$name"
+            echo "  ✓ $name"
+          }
+          extract 'eiciel-contain.sh'    eiciel-contain.sh
+          extract 'nftables.conf'        nftables.conf
+          extract 'eiciel-detect.sh'     eiciel-detect.sh
+          extract 'eiciel-watch.sh'      eiciel-watch.sh
+          extract 'eiciel-watchdog.sh'   eiciel-watchdog.sh
+          extract 'eicield.service'      eicield.service
+          extract 'eiciel-watch.service' eiciel-watch.service
+          echo "assets in $OUT"
+          SCRIPT_EOF
+          chmod +x .github/checks/extract-assets.sh
+          bash .github/checks/extract-assets.sh script/deepseek_bash_*.sh build-assets
 
-      - name: Firewall tests
-        run: sudo -E bash .github/checks/test-firewall.sh
+      - name: Generate and run firewall test
+        run: |
+          cat > .github/checks/test-firewall.sh <<'SCRIPT_EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ASSETS=build-assets
+          NS=eiciel-fw
+          VETH_H=veth-fw-h
+          VETH_N=veth-fw-n
+          HOST_IP=10.201.0.1
+          GUEST_IP=10.201.0.2
+          cleanup() {
+            sudo ip netns del "$NS" 2>/dev/null || true
+            sudo ip link del "$VETH_H" 2>/dev/null || true
+            sudo pkill -f "nc -l -p" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          fail=0
+          ok()  { printf '  ok    %s\n' "$1"; }
+          bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
 
-      - name: Containment tests
-        run: sudo -E bash .github/checks/test-containment.sh
+          sudo ip netns add "$NS"
+          sudo ip netns exec "$NS" ip link set lo up
+          sudo ip link add "$VETH_H" type veth peer name "$VETH_N"
+          sudo ip link set "$VETH_N" netns "$NS"
+          sudo ip addr add "$HOST_IP/24" dev "$VETH_H"
+          sudo ip link set "$VETH_H" up
+          sudo ip netns exec "$NS" ip addr add "$GUEST_IP/24" dev "$VETH_N"
+          sudo ip netns exec "$NS" ip link set "$VETH_N" up
+
+          sudo ip netns exec "$NS" nft -f "$ASSETS/nftables.conf"
+          sudo ip netns exec "$NS" nft list ruleset > /tmp/fw-rules.txt
+
+          grep -qE 'hook input priority 0; policy drop' /tmp/fw-rules.txt \
+            && ok "input policy drop" || bad "input policy drop missing"
+          grep -qE 'ct state established,related accept' /tmp/fw-rules.txt \
+            && ok "established accepted" || bad "established missing"
+          grep -qE 'iif "lo" accept' /tmp/fw-rules.txt \
+            && ok "loopback accepted" || bad "loopback missing"
+          grep -qE 'ip protocol icmp accept' /tmp/fw-rules.txt \
+            && ok "ICMP accepted" || bad "ICMP missing"
+          grep -qE 'tcp dport 22 accept' /tmp/fw-rules.txt \
+            && ok "SSH accepted" || bad "SSH accept missing"
+          grep -qE 'hook forward priority 0; policy drop' /tmp/fw-rules.txt \
+            && ok "forward policy drop" || bad "forward policy missing"
+          grep -qE 'hook output priority 0; policy accept' /tmp/fw-rules.txt \
+            && ok "output policy accept" || bad "output policy missing"
+          grep -qE 'udp dport 53 counter' /tmp/fw-rules.txt \
+            && ok "DNS counter present" || bad "DNS counter missing"
+
+          sudo ip netns exec "$NS" nc -l -p 22 -k >/dev/null 2>&1 &
+          sleep 1
+          timeout 3 bash -c "echo > /dev/tcp/$GUEST_IP/22" 2>/dev/null \
+            && ok "port 22 reachable" || bad "port 22 blocked"
+          sudo pkill -f "nc -l -p 22" 2>/dev/null || true
+
+          sudo ip netns exec "$NS" nc -l -p 8080 -k >/dev/null 2>&1 &
+          sleep 1
+          timeout 3 bash -c "echo > /dev/tcp/$GUEST_IP/8080" 2>/dev/null \
+            && bad "port 8080 reachable" || ok "port 8080 dropped"
+          sudo pkill -f "nc -l -p 8080" 2>/dev/null || true
+
+          echo
+          [ "$fail" -eq 0 ] && echo "FIREWALL: PASS" || echo "FIREWALL: FAIL"
+          exit "$fail"
+          SCRIPT_EOF
+          chmod +x .github/checks/test-firewall.sh
+          sudo -E bash .github/checks/test-firewall.sh
+
+      - name: Generate and run containment test
+        run: |
+          cat > .github/checks/test-containment.sh <<'SCRIPT_EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          ASSETS=build-assets
+          NS=eiciel-ct
+          VETH_H=veth-ct-h
+          VETH_N=veth-ct-n
+          HOST_IP=10.202.0.1
+          GUEST_IP=10.202.0.2
+          MGMT_IP=10.202.0.99
+          WORK=$(mktemp -d)
+          cleanup() {
+            sudo ip netns del "$NS" 2>/dev/null || true
+            sudo ip link del "$VETH_H" 2>/dev/null || true
+            rm -rf "$WORK"
+          }
+          trap cleanup EXIT
+          fail=0
+          ok()  { printf '  ok    %s\n' "$1"; }
+          bad() { printf '  FAIL  %s\n' "$1"; fail=1; }
+
+          mkdir -p "$WORK/bin"
+          for cmd in systemctl pkill who w journalctl curl restic logger systemd-run date; do
+            cat > "$WORK/bin/$cmd" <<MOCKEOF
+          #!/bin/sh
+          echo "[mock \$(basename \$0)] \$*" >> "$WORK/calls.log"
+          case "\$(basename \$0)" in
+            who)
+              echo "admin    pts/0        2026-01-01 10:00 ($HOST_IP)"
+              echo "admin    tty1         2026-01-01 09:55"
+              ;;
+            w)
+              echo "admin    pts/0    $HOST_IP  10:00  0.00s  0.01s  0.05s"
+              ;;
+            systemctl)
+              case "\$1" in is-active) echo active; exit 0 ;; esac
+              ;;
+          esac
+          exit 0
+          MOCKEOF
+            chmod +x "$WORK/bin/$cmd"
+          done
+
+          mkdir -p "$WORK/incidents"
+          cat > "$WORK/config.env" <<CFGEOF
+          MGMT_IP="$MGMT_IP"
+          WEBHOOK_URL=""
+          STOP_SERVICES="test-stopme"
+          INCIDENT_ROOT="$WORK/incidents"
+          ISOLATION_TIMEOUT=20
+          COOLDOWN_SECONDS=600
+          GITHUB_ENABLED=0
+          GITHUB_OWNER=""
+          GITHUB_REPO=""
+          RESTIC_REPO=""
+          RESTIC_PASSWORD_FILE=""
+          ADMIN_CIDRS=""
+          DETECT_INBOUND_TRUSTED_IPS=""
+          CFGEOF
+
+          sed -e "s#/etc/eiciel/config.env#$WORK/config.env#g" \
+              -e "s#/var/log/eiciel-contain.log#$WORK/contain.log#g" \
+              "$ASSETS/eiciel-contain.sh" > "$WORK/contain.sh"
+          chmod +x "$WORK/contain.sh"
+
+          sudo ip netns add "$NS"
+          sudo ip netns exec "$NS" ip link set lo up
+          sudo ip link add "$VETH_H" type veth peer name "$VETH_N"
+          sudo ip link set "$VETH_N" netns "$NS"
+          sudo ip addr add "$HOST_IP/24" dev "$VETH_H"
+          sudo ip link set "$VETH_H" up
+          sudo ip netns exec "$NS" ip addr add "$GUEST_IP/24" dev "$VETH_N"
+          sudo ip netns exec "$NS" ip link set "$VETH_N" up
+          sudo ip netns exec "$NS" ip route add default via "$HOST_IP"
+
+          nc -l -p 9999 -k >/dev/null 2>&1 &
+          sleep 1
+          sudo ip netns exec "$NS" timeout 3 bash -c "echo > /dev/tcp/$HOST_IP/9999" 2>/dev/null \
+            && ok "baseline reachable" || bad "baseline broken"
+
+          sudo ip netns exec "$NS" env \
+            PATH="$WORK/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            bash "$WORK/contain.sh" --triggered-by test --reason netns-ci \
+            2>&1 | tee "$WORK/contain-output.txt"
+
+          sudo ip netns exec "$NS" nft list table inet eiciel_contain > "$WORK/rules.txt" 2>&1 || true
+          grep -q "table inet eiciel_contain" "$WORK/rules.txt" \
+            && ok "table created" || bad "table missing"
+          grep -qE "hook output priority -10; policy drop" "$WORK/rules.txt" \
+            && ok "output drop" || bad "output drop missing"
+          grep -qE "oif \"lo\" accept" "$WORK/rules.txt" \
+            && ok "loopback accepted" || bad "loopback missing"
+          grep -qE "ip daddr $MGMT_IP" "$WORK/rules.txt" \
+            && ok "MGMT allow" || bad "MGMT allow missing"
+          grep -qE "ct state established,related ip daddr $MGMT_IP accept" "$WORK/rules.txt" \
+            && ok "established-to-MGMT" || bad "established-to-MGMT missing"
+
+          sudo ip netns exec "$NS" timeout 3 bash -c "echo > /dev/tcp/$HOST_IP/9999" 2>/dev/null \
+            && bad "still reachable" || ok "host unreachable after containment"
+
+          INC=$(ls -d "$WORK/incidents"/*/ 2>/dev/null | head -1 || true)
+          if [ -z "$INC" ]; then
+            bad "no incident dir"
+          else
+            ok "incident dir: $(basename "$INC")"
+            for f in containment.log ss.txt nft-before.txt ip-addr.txt ip-route.txt \
+                     ps.txt pstree.txt who.txt w.txt last.txt lastb.txt lsof-net.txt \
+                     lsmod.txt mount.txt df.txt env.txt proc-exe-hashes.txt; do
+              [ -f "$INC/$f" ] && ok "evidence: $f" || bad "evidence missing: $f"
+            done
+          fi
+
+          grep -q "systemd-run" "$WORK/calls.log" \
+            && ok "auto-lift scheduled" || bad "auto-lift not scheduled"
+          grep -qE "on-active=20s" "$WORK/calls.log" \
+            && ok "auto-lift timeout" || bad "auto-lift timeout wrong"
+
+          grep -q "sparing tty1" "$WORK/contain-output.txt" \
+            && ok "tty1 spared" || bad "tty1 not spared"
+          grep -q "killing user=admin tty=pts/0" "$WORK/contain-output.txt" \
+            && ok "untrusted pts killed" || bad "untrusted pts not killed"
+          grep -q "systemctl stop test-stopme" "$WORK/calls.log" \
+            && ok "STOP_SERVICES stopped" || bad "STOP_SERVICES not stopped"
+
+          sudo ip netns exec "$NS" env \
+            PATH="$WORK/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            bash -c "
+              bash $WORK/contain.sh --triggered-by t1 >/dev/null 2>&1 &
+              sleep 0.2
+              bash $WORK/contain.sh --triggered-by t2 2>&1
+            " > "$WORK/mutex.txt" || true
+          grep -q "containment already in progress" "$WORK/mutex.txt" \
+            && ok "mutex blocks concurrent run" || bad "mutex failed"
+
+          echo
+          [ "$fail" -eq 0 ] && echo "CONTAINMENT: PASS" || echo "CONTAINMENT: FAIL"
+          exit "$fail"
+          SCRIPT_EOF
+          chmod +x .github/checks/test-containment.sh
+          sudo -E bash .github/checks/test-containment.sh
 
       - if: always()
         uses: actions/upload-artifact@v4
