@@ -3966,7 +3966,7 @@ auditd
 audispd-plugins
 fail2ban
 nftables
-conntrack-tools
+conntrack
 acl
 attr
 rsyslog
